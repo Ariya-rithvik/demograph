@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DemoGraph Live</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+  :root { --bg:#060a16; --panel:#0c1326; --line:#1b2745; --text:#e8eefc; --dim:#8090b0;
+          --cyan:#00e5ff; --mag:#ff3d8e; --amber:#ffb020; --green:#36d399; --red:#ff3b5c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 "Segoe UI", Inter, system-ui, sans-serif; height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:14px; padding:12px 18px; border-bottom:1px solid var(--line); background:#070d1d; flex-wrap:wrap; }
+  .brand { font-weight:800; font-size:18px; letter-spacing:-.01em; }
+  .brand span { color:var(--cyan); }
+  .pill { font:600 12px ui-monospace, Consolas, monospace; color:var(--dim); border:1px solid var(--line); border-radius:99px; padding:3px 10px; }
+  .pill.live { color:var(--green); border-color:#1f5a46; }
+  .spacer { flex:1; }
+  button { font:600 13px inherit; font-family:inherit; color:#04111c; background:var(--cyan); border:0; border-radius:8px; padding:8px 14px; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button:disabled { opacity:.45; cursor:default; }
+  input { font:14px inherit; font-family:inherit; background:#081022; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 11px; width:210px; }
+  main { flex:1; display:grid; grid-template-columns: 1fr 380px; min-height:0; }
+  #stage { position:relative; min-height:0; }
+  canvas { position:absolute; inset:0; width:100%; height:100%; }
+  #legend { position:absolute; left:16px; bottom:14px; display:flex; gap:14px; color:var(--dim); font-size:12px; }
+  #legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+  #banner { position:absolute; left:16px; top:14px; max-width:560px; background:rgba(8,14,30,.86); border:1px solid var(--line); border-radius:12px; padding:12px 16px; }
+  #banner h2 { margin:0 0 2px; font-size:20px; }
+  #banner p { margin:0; color:var(--dim); }
+  aside { border-left:1px solid var(--line); background:var(--panel); overflow:auto; padding:14px; display:flex; flex-direction:column; gap:14px; }
+  h3 { margin:0 0 8px; font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); }
+  .agent { display:grid; grid-template-columns: 92px 1fr; gap:10px; align-items:center; padding:8px; border:1px solid var(--line); border-radius:10px; margin-bottom:8px; background:#0a1122; }
+  .agent img, .agent .ph { width:92px; height:58px; object-fit:cover; object-position:top; border-radius:6px; background:#111a33; }
+  .agent b { display:block; font-size:13px; }
+  .agent small { color:var(--dim); font-family:ui-monospace, Consolas, monospace; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; }
+  #log div { font:12px ui-monospace, Consolas, monospace; color:#b8c4dd; padding:3px 0; border-bottom:1px solid #111a31; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .scene { padding:8px 10px; border-left:3px solid var(--cyan); background:#0a1122; border-radius:0 8px 8px 0; margin-bottom:6px; }
+  .scene small { color:var(--dim); display:block; }
+  .stale { color:#ffb3c0; background:#2a0a14; border:1px solid #5e1426; border-radius:8px; padding:8px 10px; margin-bottom:6px; font-size:13px; }
+  video { width:100%; border-radius:10px; border:1px solid var(--line); background:#000; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .stat { background:#0a1122; border:1px solid var(--line); border-radius:10px; padding:8px 10px; }
+  .stat b { font-size:20px; display:block; }
+  .stat small { color:var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Demo<span>Graph</span> live</div>
+  <span class="pill" id="crawlPill">no crawl yet</span>
+  <span class="spacer"></span>
+  <button id="exploreBtn">▶ Explore live</button>
+  <input id="goal" value="export csv" aria-label="Feature to demo">
+  <button class="ghost" id="planBtn">Plan route</button>
+  <button class="ghost" id="recordBtn">Record video</button>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="banner"><h2>Waiting</h2><p>Press “Explore live” to send three browser agents through the product.</p></div>
+    <div id="legend">
+      <span><i style="background:#2a3a63"></i>queued</span>
+      <span><i style="background:var(--amber)"></i>being scraped</span>
+      <span><i style="background:var(--cyan)"></i>stored in FalkorDB</span>
+      <span><i style="background:#fff"></i>planned route</span>
+    </div>
+  </div>
+  <aside>
+    <section><div class="stats">
+      <div class="stat"><b id="sPages">0</b><small>pages</small></div>
+      <div class="stat"><b id="sFacts">0</b><small>elements</small></div>
+      <div class="stat"><b id="sLinks">0</b><small>links</small></div>
+    </div></section>
+    <section><h3>Explorer agents</h3><div id="agents"></div></section>
+    <section><h3>Activity</h3><div id="log"></div></section>
+    <section id="planSec" hidden><h3>Planned demo</h3><div id="scenes"></div></section>
+    <section id="staleSec" hidden><h3>Stale video seconds</h3><div id="stale"></div></section>
+    <section id="videoSec" hidden><h3>Latest video</h3><video id="video" controls></video><small id="videoCap" style="color:var(--dim)"></small></section>
+  </aside>
+</main>
+<script>
+const AGENT_COLORS = ['#00e5ff', '#ff3d8e', '#ffb020', '#36d399', '#a78bfa'];
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = window.devicePixelRatio || 1;
+function resize() {
+  const r = canvas.getBoundingClientRect(); W = r.width; H = r.height;
+  canvas.width = W * DPR; canvas.height = H * DPR; ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  sim.force('center', d3.forceCenter(W / 2, H / 2 + 20));
+  sim.force('x', d3.forceX(W / 2).strength(0.06)).force('y', d3.forceY(H / 2 + 20).strength(0.08));
+  sim.alpha(0.3).restart();
+}
+
+const nodes = new Map(), links = [];
+let linkKey = new Set(), agentPos = new Map(), agentOrder = [], route = null, routeT = 0, lastState = null, shownCrawl = null;
+let treeLinks = [];
+const sim = d3.forceSimulation([])
+  .force('charge', d3.forceManyBody().strength(-300))
+  .force('link', d3.forceLink([]).id(d => d.id).distance(95).strength(0.5))
+  .force('collide', d3.forceCollide(34))
+  .alphaDecay(0.03);
+
+function agentColor(id) {
+  if (!id) return '#888';
+  if (!agentOrder.includes(id)) agentOrder.push(id);
+  return AGENT_COLORS[agentOrder.indexOf(id) % AGENT_COLORS.length];
+}
+const short = id => (id || '').replace(/^explorer-\d+-/, 'agent ');
+
+function reset() {
+  nodes.clear(); links.length = 0; treeLinks = []; linkKey = new Set(); agentPos.clear(); route = null;
+  sim.nodes([]); sim.force('link').links([]);
+}
+
+function merge(state) {
+  const cid = state.crawl && state.crawl.id;
+  if (cid !== shownCrawl) { reset(); shownCrawl = cid; }
+  let changed = false;
+  for (const p of state.pages) {
+    let n = nodes.get(p.id);
+    if (!n) {
+      const from = p.from && nodes.get(p.from);
+      n = { id: p.id, born: performance.now(), x: from ? from.x : W / 2, y: from ? from.y : H / 2 };
+      nodes.set(p.id, n); changed = true;
+    }
+    Object.assign(n, { path: p.path, status: p.status, agent: p.agent, facts: p.facts, shot: p.shot });
+    if (p.from && nodes.has(p.from) && !treeLinks.some(l => (l.target.id || l.target) === p.id)) {
+      treeLinks.push({ source: p.from, target: p.id, born: performance.now() }); changed = true;
+    }
+  }
+  for (const e of state.edges) {
+    const k = e.source + '>' + e.target;
+    if (!linkKey.has(k) && nodes.has(e.source) && nodes.has(e.target)) {
+      linkKey.add(k); links.push({ source: e.source, target: e.target, action: e.action, born: performance.now() }); changed = true;
+    }
+  }
+  if (changed) {
+    sim.nodes([...nodes.values()]); sim.force('link').links(treeLinks); sim.alpha(0.6).restart();
+  }
+}
+
+function draw(now) {
+  ctx.clearRect(0, 0, W, H);
+  // every link the agents found, faint
+  ctx.strokeStyle = 'rgba(70,120,210,0.09)'; ctx.lineWidth = 1;
+  for (const l of links) {
+    const a = nodes.get(l.source.id || l.source), b = nodes.get(l.target.id || l.target);
+    if (!a || !b || a.x == null || b.x == null) continue;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  // how each page was discovered: the crawl tree
+  for (const l of treeLinks) {
+    const a = l.source, b = l.target; if (a.x == null || b.x == null) continue;
+    const grow = Math.min(1, (now - l.born) / 600);
+    ctx.strokeStyle = 'rgba(90,150,240,0.55)'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x + (b.x - a.x) * grow, a.y + (b.y - a.y) * grow); ctx.stroke();
+    const t = ((now / 2600) + (a.index || 0) * 0.13) % 1;   // data flowing along each link
+    ctx.fillStyle = 'rgba(102,224,255,0.55)';
+    ctx.beginPath(); ctx.arc(a.x + (b.x - a.x) * t * grow, a.y + (b.y - a.y) * t * grow, 1.8, 0, 7); ctx.fill();
+  }
+  // planned route
+  if (route) {
+    const pts = route.map(id => nodes.get(id)).filter(Boolean);
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 4; ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 18;
+    ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke(); ctx.shadowBlur = 0;
+    if (pts.length > 1) {
+      const seg = (now - routeT) / 900, i = Math.floor(seg) % (pts.length - 1), f = seg % 1;
+      const a = pts[i], b = pts[i + 1];
+      ctx.fillStyle = '#fff'; ctx.shadowColor = '#fff'; ctx.shadowBlur = 25;
+      ctx.beginPath(); ctx.arc(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, 7, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+    }
+  }
+  // nodes
+  for (const n of nodes.values()) {
+    if (n.x == null) continue;
+    const pop = Math.min(1, (now - n.born) / 450), r = (10 + Math.min(10, (n.facts || 0) / 3)) * (0.4 + 0.6 * pop);
+    const onRoute = route && route.includes(n.id);
+    let fill = '#22305a', glow = null;
+    if (n.status === 'claimed') { fill = agentColor(n.agent); glow = fill; }
+    else if (n.status === 'done') { fill = '#00e5ff'; glow = 'rgba(0,229,255,.6)'; }
+    else if (n.status === 'failed') fill = '#ff3b5c';
+    if (onRoute) glow = '#ffffff';
+    if (n.status === 'claimed') {  // scraping: pulsing ring
+      const pr = r + 6 + 6 * Math.sin(now / 160);
+      ctx.strokeStyle = fill; ctx.lineWidth = 2; ctx.globalAlpha = 0.7;
+      ctx.beginPath(); ctx.arc(n.x, n.y, pr, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    ctx.shadowColor = glow || 'transparent'; ctx.shadowBlur = glow ? 22 : 0;
+    ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+    if (n.status === 'pending') { ctx.strokeStyle = '#3d5291'; ctx.lineWidth = 1.5; ctx.stroke(); }
+    ctx.font = '600 12px ui-monospace, Consolas, monospace'; ctx.textAlign = 'center';
+    ctx.fillStyle = onRoute ? '#fff' : 'rgba(220,230,255,.85)';
+    const label = n.path.length > 26 ? n.path.slice(0, 25) + '…' : n.path;
+    ctx.fillText(label, n.x, n.y + r + 15);
+  }
+  // agents: a dot that glides to the page it is scraping
+  for (const n of nodes.values()) {
+    if (n.status !== 'claimed' || !n.agent || n.x == null) continue;
+    let a = agentPos.get(n.agent);
+    if (!a) { a = { x: n.x, y: n.y }; agentPos.set(n.agent, a); }
+    a.x += (n.x - a.x) * 0.12; a.y += (n.y - a.y) * 0.12;
+    const ang = now / 300 + agentOrder.indexOf(n.agent) * 2.1;
+    const ax = a.x + Math.cos(ang) * 24, ay = a.y + Math.sin(ang) * 24, col = agentColor(n.agent);
+    ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 20;
+    ctx.beginPath(); ctx.arc(ax, ay, 6, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+    ctx.strokeStyle = col; ctx.globalAlpha = .45; ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(n.x, n.y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+  }
+  requestAnimationFrame(draw);
+}
+
+const $ = id => document.getElementById(id);
+const fileUrl = p => p ? '/files/' + encodeURI(p) : null;
+function banner(h, p) { $('banner').innerHTML = `<h2>${h}</h2><p>${p}</p>`; }
+
+function renderPanel(s) {
+  const pages = s.pages, done = pages.filter(p => p.status === 'done').length;
+  $('sPages').textContent = pages.length; $('sLinks').textContent = s.edges.length;
+  $('sFacts').textContent = pages.reduce((a, p) => a + (p.facts || 0), 0);
+  const running = s.crawl && s.crawl.status === 'running';
+  $('crawlPill').textContent = s.crawl ? `${s.crawl.id} · ${s.crawl.status}` : 'no crawl yet';
+  $('crawlPill').className = 'pill' + (running ? ' live' : '');
+  if (running) banner('Explorer agents at work', `${done} of ${pages.length} discovered pages stored in FalkorDB. Each agent claims the next page from the shared queue in the graph.`);
+  else if (s.crawl && !route) banner('Product mapped', `${pages.length} pages and ${s.edges.length} links are in graph <code>${s.graph}</code>. Type a feature and press “Plan route”.`);
+
+  const claimed = pages.filter(p => p.status === 'claimed');
+  const byAgent = new Map();
+  for (const v of s.visits) if (!byAgent.has(v.agent)) byAgent.set(v.agent, v);
+  for (const p of claimed) byAgent.set(p.agent, { path: p.path, agent: p.agent, live: true, shot: null });
+  $('agents').innerHTML = [...byAgent.values()].slice(0, 5).map(v => {
+    const page = pages.find(p => p.path === v.path), shot = !v.live && page && page.shot;
+    return `<div class="agent">${shot ? `<img src="${fileUrl(shot)}" alt="">` : '<div class="ph"></div>'}
+      <div><b><span class="dot" style="background:${agentColor(v.agent)}"></span>${short(v.agent)}</b>
+      <small>${v.live ? 'scraping ' : 'stored '}${v.path}</small></div></div>`;
+  }).join('') || '<small style="color:var(--dim)">idle</small>';
+  const job = s.jobs.explore || s.jobs.record;
+  $('log').innerHTML = (job ? job.log.slice().reverse() : s.visits.map(v => `${short(v.agent)} stored ${v.path} (${v.facts} facts${v.unchanged ? ', unchanged' : ''})`))
+    .slice(0, 12).map(l => `<div>${l.replace(/</g, '&lt;')}</div>`).join('');
+
+  $('staleSec').hidden = !s.stale_segments.length;
+  $('stale').innerHTML = s.stale_segments.map(x => `<div class="stale"><b>${x.start}s–${x.end}s</b> · scene ${x.scene}: “${x.was}” → product now says “${x.now}”</div>`).join('');
+  if (s.videos.length) {
+    const v = s.videos[0], src = fileUrl(v.path);
+    $('videoSec').hidden = false;
+    if ($('video').getAttribute('src') !== src) $('video').setAttribute('src', src);
+    $('videoCap').textContent = `${v.goal} · ${Number(v.duration).toFixed(1)}s`;
+  }
+  $('exploreBtn').disabled = !!(s.jobs.explore && s.jobs.explore.running);
+  $('recordBtn').disabled = !!(s.jobs.record && s.jobs.record.running);
+  $('recordBtn').textContent = s.jobs.record && s.jobs.record.running ? 'Recording…' : 'Record video';
+}
+
+async function poll() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    lastState = s; merge(s); renderPanel(s);
+  } catch (e) { banner('Dashboard offline', String(e)); }
+  setTimeout(poll, 600);
+}
+
+$('exploreBtn').onclick = async () => {
+  route = null; $('planSec').hidden = true;
+  await fetch('/api/explore', { method: 'POST', body: JSON.stringify({ pace: 1.2 }) });
+  banner('Starting a crawl', 'Launching three Chromium agents…');
+};
+$('planBtn').onclick = async () => {
+  const goal = $('goal').value.trim(); if (!goal) return;
+  banner('Planning…', `Full-text search for “${goal}”, then weighted shortest path in FalkorDB.`);
+  const p = await (await fetch('/api/plan?goal=' + encodeURIComponent(goal))).json();
+  if (p.error) return banner('No plan', p.error);
+  route = p.route; routeT = performance.now();
+  banner(`Route to “${p.target.text}”`, `${p.paths.join(' → ')} · cost ${p.cost} · ${p.scenes.length} scenes, every one citing real elements`);
+  $('planSec').hidden = false;
+  $('scenes').innerHTML = p.scenes.map((s, i) => `<div class="scene">${i + 1}. ${s.narration}<small>${s.page} · cites ${s.cites.map(c => '“' + c.slice(0, 40) + '”').join(', ')}</small></div>`).join('');
+};
+$('recordBtn').onclick = async () => {
+  const goal = $('goal').value.trim(); if (!goal) return;
+  await fetch('/api/record', { method: 'POST', body: JSON.stringify({ goal }) });
+  banner('Recording', 'Replaying the route in Chromium, checking every citation live, then rendering the narrated MP4…');
+};
+
+window.addEventListener('resize', resize);
+resize(); poll(); requestAnimationFrame(draw);
+sim.on('tick', () => {  // keep every page on screen
+  for (const n of nodes.values()) {
+    n.x = Math.max(40, Math.min(W - 40, n.x)); n.y = Math.max(140, Math.min(H - 50, n.y));
+  }
+});
+</script>
+</body>
+</html>

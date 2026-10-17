@@ -1,0 +1,64 @@
+{
+  "product": "Ledgerly",
+  "tagline": "Invoices that chase themselves.",
+  "currency": "$",
+  "plans": [
+    {
+      "id": "starter",
+      "name": "Starter",
+      "price": 9,
+      "limit": "50 invoices a month",
+      "features": ["Branded PDF invoices", "Email delivery", "1 user"]
+    },
+    {
+      "id": "pro",
+      "name": "Pro",
+      "price": 29,
+      "limit": "Unlimited invoices",
+      "features": ["Automatic payment reminders", "Recurring invoices", "Cash-flow reports", "3 users"]
+    },
+    {
+      "id": "business",
+      "name": "Business",
+      "price": 79,
+      "limit": "Unlimited invoices",
+      "features": ["Multi-currency billing", "Team roles and approvals", "Priority support", "10 users"]
+    }
+  ],
+  "features": [
+    {
+      "slug": "invoices",
+      "name": "Smart invoices",
+      "summary": "Create a branded invoice in under a minute and send it straight from Ledgerly.",
+      "detail": "Pick a client, add an amount and a due date, and Ledgerly fills in the rest: your logo, payment link and tax line."
+    },
+    {
+      "slug": "reminders",
+      "name": "Automatic reminders",
+      "summary": "Late payers get a polite nudge on the schedule you choose.",
+      "detail": "Reminders go out 3 days before, on, and 7 days after the due date. Every reminder is logged on the invoice."
+    },
+    {
+      "slug": "reports",
+      "name": "Cash-flow reports",
+      "summary": "See what is paid, what is overdue, and what to expect this month.",
+      "detail": "The reports page groups every invoice by status and exports the whole list as CSV for your accountant."
+    }
+  ],
+  "labels": {
+    "start_trial": "Start free trial",
+    "new_invoice": "New invoice",
+    "create_invoice": "Create invoice",
+    "send_reminder": "Send reminder",
+    "export_csv": "Export CSV"
+  },
+  "workspace": {
+    "name": "Acme Studio",
+    "plan": "pro"
+  },
+  "invoices": [
+    {"id": "INV-1001", "client": "Northwind Traders", "amount": 1200, "status": "Paid", "due": "2026-10-01"},
+    {"id": "INV-1002", "client": "Blue Harbor Cafe", "amount": 450, "status": "Overdue", "due": "2026-10-05"},
+    {"id": "INV-1003", "client": "Kite & Kettle", "amount": 2300, "status": "Sent", "due": "2026-10-28"}
+  ]
+}

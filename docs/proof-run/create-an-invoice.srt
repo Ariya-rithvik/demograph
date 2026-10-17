@@ -1,0 +1,19 @@
+1
+00:00:02,450 --> 00:00:07,650
+This is Ledgerly. “Invoices that chase themselves.”
+
+2
+00:00:08,050 --> 00:00:12,350
+Click “Demo workspace” to open the Dashboard page.
+
+3
+00:00:12,750 --> 00:00:16,780
+Click “New invoice” to open the New invoice page.
+
+4
+00:00:17,180 --> 00:00:22,420
+Fill in Client, Amount and Due date, then click “Create invoice”.
+
+5
+00:00:22,820 --> 00:00:28,220
+Ledgerly shows “Invoice INV-2001 created and sent.”.

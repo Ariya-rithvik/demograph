@@ -1,0 +1,14 @@
+# FalkorDB on :6379 and FalkorDB Browser on :3000 (http://localhost:3000).
+# No Docker? See scripts/falkordb-wsl.sh for running it inside WSL instead.
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - falkordb-data:/var/lib/falkordb/data
+    restart: unless-stopped
+
+volumes:
+  falkordb-data:

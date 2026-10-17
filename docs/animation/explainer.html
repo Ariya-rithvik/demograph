@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<!-- 3D explainer animation. Generated with Google Gemini (Argon), then edited:
+     real Ledgerly content, accurate claims, and a frame-stepping capture mode
+     (open with ?capture and call window.__step(t) per frame). -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DemoGraph Explainer</title>
+  <style>
+    :root {
+      --bg-dark: #040711;
+      --cyan: #00f0ff;
+      --magenta: #ff2a85;
+      --amber: #ffb800;
+      --red: #ff2a4b;
+      --text-main: #f4f7ff;
+      --text-dim: #8a99ad;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #020409;
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; overflow: hidden; user-select: none;
+    }
+    #stage {
+      position: relative; width: 1280px; height: 720px;
+      background: radial-gradient(circle at 50% 45%, #0c162d 0%, #050914 60%, #02040a 100%);
+      overflow: hidden;
+    }
+    canvas#webgl { display: block; width: 1280px; height: 720px; }
+    .vignette {
+      position: absolute; inset: 0; pointer-events: none; z-index: 2;
+      background: radial-gradient(circle at 50% 50%, transparent 58%, rgba(2, 4, 10, 0.72) 100%);
+    }
+    #hud {
+      position: absolute; inset: 0; pointer-events: none; z-index: 5;
+      display: flex; flex-direction: column; justify-content: space-between; padding: 32px 44px;
+    }
+    .title-container { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; max-width: 760px;
+      background: rgba(3, 6, 15, 0.78); padding: 14px 20px 16px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.06); }
+    .act-pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--cyan); background: rgba(0, 240, 255, 0.1); border: 1px solid rgba(0, 240, 255, 0.3);
+      padding: 5px 12px; border-radius: 999px; backdrop-filter: blur(8px); transition: all 0.4s ease;
+    }
+    .act-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+    #act-title {
+      font-size: 42px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; color: #ffffff;
+      text-shadow: 0 0 28px rgba(0, 240, 255, 0.35), 0 4px 16px rgba(0, 0, 0, 0.8);
+    }
+    #act-subtitle { font-size: 16px; color: var(--text-dim); text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8); }
+    #stale-timeline-ui {
+      position: absolute; left: 50%; bottom: 112px; transform: translateX(-50%) translateY(16px);
+      width: 560px; background: rgba(12, 6, 14, 0.88); border: 1px solid rgba(255, 42, 75, 0.55);
+      box-shadow: 0 0 35px rgba(255, 42, 75, 0.35), inset 0 0 15px rgba(255, 42, 75, 0.15);
+      border-radius: 10px; padding: 12px 18px; opacity: 0;
+      transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    #stale-timeline-ui.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .stale-header {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
+      font-size: 12px; font-weight: 600; letter-spacing: 0.05em; color: #ffb3be;
+    }
+    .stale-badge {
+      background: rgba(255, 42, 75, 0.25); color: #ff4d6a; border: 1px solid #ff2a4b;
+      padding: 2px 9px; border-radius: 4px; font-family: ui-monospace, Consolas, monospace;
+      font-size: 12px; font-weight: 700; box-shadow: 0 0 12px rgba(255, 42, 75, 0.5);
+    }
+    .timeline-track { position: relative; height: 10px; background: rgba(255, 255, 255, 0.1); border-radius: 5px; overflow: hidden; }
+    .timeline-segment-stale {
+      position: absolute; left: 58%; width: 22%; top: 0; bottom: 0;
+      background: linear-gradient(90deg, #ff1e42, #ff6b81); border-radius: 4px; box-shadow: 0 0 16px #ff2a4b;
+    }
+    #finale-banner {
+      position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      pointer-events: none; z-index: 6; opacity: 0; transition: opacity 0.8s ease;
+      background: radial-gradient(circle at 50% 50%, rgba(4, 8, 22, 0.78) 0%, rgba(2, 4, 10, 0.45) 100%);
+    }
+    #finale-banner.visible { opacity: 1; }
+    .finale-title {
+      font-size: 64px; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 14px;
+      background: linear-gradient(135deg, #ffffff 0%, #7beeff 50%, #ff4d94 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 35px rgba(0, 240, 255, 0.45));
+    }
+    .finale-sub { font-size: 18px; color: #b0c4de; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; }
+    .bottom-bar { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+    .time-row {
+      display: flex; justify-content: space-between;
+      font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: rgba(255, 255, 255, 0.5);
+    }
+    .progress-outer { width: 100%; height: 4px; background: rgba(255, 255, 255, 0.1); border-radius: 2px; overflow: hidden; }
+    #progress-inner {
+      width: 0%; height: 100%;
+      background: linear-gradient(90deg, var(--cyan), var(--magenta), var(--amber)); box-shadow: 0 0 12px var(--cyan);
+    }
+    /* capture mode: no CSS transitions, so every frame depends only on t */
+    body.capture * { transition: none !important; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="webgl" width="1280" height="720"></canvas>
+    <div class="vignette"></div>
+    <div id="hud">
+      <div class="title-container">
+        <div class="act-pill" id="act-pill"><span class="dot" id="act-dot"></span><span id="act-tag">ACT 01 / 06</span></div>
+        <h1 id="act-title">A product website</h1>
+        <p id="act-subtitle">Ledgerly, a sample invoicing app</p>
+      </div>
+      <div id="stale-timeline-ui">
+        <div class="stale-header">
+          <span>DEMO VIDEO "EXPORT CSV": TIMELINE</span>
+          <span class="stale-badge">13.8s - 16.2s stale</span>
+        </div>
+        <div class="timeline-track"><div class="timeline-segment-stale"></div></div>
+      </div>
+      <div class="bottom-bar">
+        <div class="time-row">
+          <span id="status-readout">DEMOGRAPH PIPELINE</span>
+          <span id="time-readout">00.0s / 50.0s</span>
+        </div>
+        <div class="progress-outer"><div id="progress-inner"></div></div>
+      </div>
+    </div>
+    <div id="finale-banner">
+      <div class="finale-title">DemoGraph + FalkorDB</div>
+      <div class="finale-sub">Demo videos that know when they are wrong</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // Replaceable graph data (the real Ledgerly pages and links from the crawl).
+    const GRAPH = {
+      nodes: [
+        { id: '/',                 label: '/',                 cardPos: [-9.2,  3.2,  0.8], graphPos: [ 0.0,  4.5,  0.0] },
+        { id: '/pricing',          label: '/pricing',          cardPos: [-3.1,  3.5, -0.5], graphPos: [-4.8,  2.0,  2.2] },
+        { id: '/features',         label: '/features',         cardPos: [ 3.1,  3.5, -0.4], graphPos: [ 4.6,  2.4, -1.8] },
+        { id: '/app',              label: '/app',              cardPos: [ 9.2,  3.2,  0.8], graphPos: [ 0.4,  0.6,  0.5] },
+        { id: '/app/invoices',     label: '/app/invoices',     cardPos: [-9.2, -2.5,  0.6], graphPos: [-4.2, -2.2, -2.0] },
+        { id: '/app/invoices/new', label: '/app/invoices/new', cardPos: [-3.1, -2.8, -0.6], graphPos: [-6.8, -4.6, -0.5] },
+        { id: '/app/reports',      label: '/app/reports',      cardPos: [ 3.1, -2.8, -0.4], graphPos: [ 4.5, -2.0,  2.6] },
+        { id: '/app/settings',     label: '/app/settings',     cardPos: [ 9.2, -2.5,  0.7], graphPos: [ 0.2, -3.5, -2.8] }
+      ],
+      edges: [
+        { from: '/',             to: '/pricing' },
+        { from: '/',             to: '/features' },
+        { from: '/',             to: '/app' },
+        { from: '/app',          to: '/app/invoices' },
+        { from: '/app',          to: '/app/reports' },
+        { from: '/app',          to: '/app/settings' },
+        { from: '/app/invoices', to: '/app/invoices/new' },
+        { from: '/app/settings', to: '/pricing' }
+      ]
+    };
+
+    window.__done = false;
+    const CAPTURE = new URLSearchParams(location.search).has('capture');
+    if (CAPTURE) document.body.classList.add('capture');
+
+    const TOTAL_DURATION = 50.0;
+    const clamp = (v, min = 0, max = 1) => Math.max(min, Math.min(max, v));
+    const norm = (t, start, end) => clamp((t - start) / (end - start), 0, 1);
+    const easeInOutCubic = (x) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+    const easeOutCubic = (x) => 1 - Math.pow(1 - x, 3);
+    const easeOutBack = (x) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+
+    const canvas = document.getElementById('webgl');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: CAPTURE });
+    renderer.setSize(1280, 720, false);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x040814, 0.018);
+    const camera = new THREE.PerspectiveCamera(45, 1280 / 720, 0.1, 200);
+    camera.position.set(0, 0.5, 22);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enabled = false;
+
+    scene.add(new THREE.AmbientLight(0x88aaff, 0.9));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
+    dirLight.position.set(10, 18, 16);
+    scene.add(dirLight);
+
+    // Deterministic random so every capture is identical.
+    let seed = 7;
+    const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+    function createGlowTexture(colorHex = '#ffffff', hardness = 0.2) {
+      const size = 256, c = document.createElement('canvas');
+      c.width = size; c.height = size;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(size / 2, size / 2, size * 0.02, size / 2, size / 2, size / 2);
+      grad.addColorStop(0, colorHex);
+      grad.addColorStop(hardness, colorHex);
+      grad.addColorStop(0.55, 'rgba(255,255,255,0.18)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, size, size);
+      return new THREE.CanvasTexture(c);
+    }
+    const baseGlowTexture = createGlowTexture('#ffffff', 0.12);
+
+    function createGlowSprite(color, scale = 2.5, opacity = 0.75) {
+      const mat = new THREE.SpriteMaterial({
+        map: baseGlowTexture, color: new THREE.Color(color), blending: THREE.AdditiveBlending,
+        transparent: true, opacity, depthWrite: false
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(scale, scale, 1);
+      return sprite;
+    }
+
+    // Starfield
+    {
+      const starCount = 450;
+      const positions = new Float32Array(starCount * 3);
+      const colors = new Float32Array(starCount * 3);
+      const palette = [new THREE.Color(0x00f0ff), new THREE.Color(0xff2a85), new THREE.Color(0x6688cc)];
+      for (let i = 0; i < starCount; i++) {
+        positions[i * 3] = (rand() - 0.5) * 75;
+        positions[i * 3 + 1] = (rand() - 0.5) * 48;
+        positions[i * 3 + 2] = -10 - rand() * 35;
+        const pick = rand() < 0.3 ? palette[0] : (rand() < 0.5 ? palette[1] : palette[2]);
+        colors[i * 3] = pick.r; colors[i * 3 + 1] = pick.g; colors[i * 3 + 2] = pick.b;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      scene.add(new THREE.Points(geo, new THREE.PointsMaterial({
+        size: 0.45, map: baseGlowTexture, vertexColors: true, blending: THREE.AdditiveBlending,
+        transparent: true, opacity: 0.65, depthWrite: false
+      })));
+    }
+
+    function createRoundedRectShape(w, h, r) {
+      const shape = new THREE.Shape(), x = -w / 2, y = -h / 2;
+      shape.moveTo(x + r, y);
+      shape.lineTo(x + w - r, y);
+      shape.quadraticCurveTo(x + w, y, x + w, y + r);
+      shape.lineTo(x + w, y + h - r);
+      shape.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      shape.lineTo(x + r, y + h);
+      shape.quadraticCurveTo(x, y + h, x, y + h - r);
+      shape.lineTo(x, y + r);
+      shape.quadraticCurveTo(x, y, x + r, y);
+      return shape;
+    }
+
+    function drawBrowserCardTexture(routeLabel, highlightLevel = 0, accentHex = '#00f0ff') {
+      const c = document.createElement('canvas');
+      c.width = 512; c.height = 340;
+      const ctx = c.getContext('2d');
+      const lit = highlightLevel > 0.1;
+      ctx.fillStyle = lit ? 'rgba(14, 28, 56, 0.94)' : 'rgba(10, 18, 36, 0.88)';
+      ctx.beginPath(); ctx.roundRect(4, 4, 504, 332, 22); ctx.fill();
+      ctx.fillStyle = 'rgba(22, 36, 68, 0.96)';
+      ctx.beginPath(); ctx.roundRect(4, 4, 504, 56, [22, 22, 0, 0]); ctx.fill();
+      ['#ff5f56', '#ffbd2e', '#27c93f'].forEach((col, i) => {
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(32 + i * 20, 32, 6.5, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.fillStyle = 'rgba(6, 11, 24, 0.9)';
+      ctx.strokeStyle = lit ? accentHex : 'rgba(120, 160, 220, 0.25)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(102, 14, 386, 34, 10); ctx.fill(); ctx.stroke();
+      ctx.font = 'bold 20px ui-monospace, Consolas, monospace';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(routeLabel, 118, 38);
+      ctx.fillStyle = 'rgba(0, 240, 255, 0.12)';
+      ctx.beginPath(); ctx.roundRect(28, 82, 140, 22, 6); ctx.fill();
+      if (routeLabel.includes('reports')) {
+        [0.45, 0.75, 0.6, 0.92, 0.7, 0.85].forEach((bh, idx) => {
+          ctx.fillStyle = idx === 3 ? '#00f0ff' : 'rgba(0, 240, 255, 0.32)';
+          const h = bh * 110;
+          ctx.fillRect(36 + idx * 42, 240 - h, 26, h);
+        });
+        ctx.fillStyle = '#00d8ff';
+        ctx.beginPath(); ctx.roundRect(326, 86, 152, 38, 8); ctx.fill();
+        ctx.fillStyle = '#031022';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.fillText('Export CSV', 356, 110);
+      } else if (routeLabel.includes('pricing')) {
+        for (let i = 0; i < 3; i++) {
+          ctx.fillStyle = i === 1 ? 'rgba(0, 240, 255, 0.22)' : 'rgba(255,255,255,0.06)';
+          ctx.beginPath(); ctx.roundRect(28 + i * 156, 118, 140, 145, 10); ctx.fill();
+        }
+      } else {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
+        ctx.beginPath();
+        ctx.roundRect(28, 120, 280, 95, 10);
+        ctx.roundRect(324, 120, 160, 95, 10);
+        ctx.roundRect(28, 230, 456, 42, 8);
+        ctx.fill();
+      }
+      ctx.font = '800 34px "Segoe UI", sans-serif';
+      ctx.fillStyle = lit ? '#ffffff' : 'rgba(240, 248, 255, 0.95)';
+      ctx.shadowColor = accentHex;
+      ctx.shadowBlur = lit ? 18 : 6;
+      ctx.fillText(routeLabel, 30, 306);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = lit ? accentHex : 'rgba(110, 165, 255, 0.42)';
+      ctx.lineWidth = lit ? 6 : 3;
+      ctx.beginPath(); ctx.roundRect(4, 4, 504, 332, 22); ctx.stroke();
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    }
+
+    function createLabelSprite(text, colorHex = '#ffffff') {
+      const c = document.createElement('canvas');
+      c.width = 512; c.height = 128;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = 'rgba(5, 12, 28, 0.82)';
+      ctx.strokeStyle = colorHex;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(36, 24, 440, 80, 40); ctx.fill(); ctx.stroke();
+      ctx.font = 'bold 38px ui-monospace, Consolas, monospace';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, 256, 65);
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+      sprite.scale.set(2.9, 0.72, 1);
+      return sprite;
+    }
+
+    // Nodes / cards
+    const worldGroup = new THREE.Group();
+    scene.add(worldGroup);
+    const cardWidth = 4.4, cardHeight = 2.9;
+    const cardGeo = new THREE.ShapeGeometry(createRoundedRectShape(cardWidth, cardHeight, 0.22), 16);
+    {
+      const pos = cardGeo.attributes.position;
+      const uvs = new Float32Array(pos.count * 2);
+      for (let i = 0; i < pos.count; i++) {
+        uvs[i * 2] = (pos.getX(i) + cardWidth / 2) / cardWidth;
+        uvs[i * 2 + 1] = (pos.getY(i) + cardHeight / 2) / cardHeight;
+      }
+      cardGeo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    }
+    const nodeSphereGeo = new THREE.SphereGeometry(0.42, 32, 32);
+    const nodeEntities = [];
+    const nodeMap = new Map();
+
+    GRAPH.nodes.forEach((n, idx) => {
+      const id = n.id, label = n.label || id;
+      const col = idx % 4, row = Math.floor(idx / 4);
+      const angle = (idx / Math.max(1, GRAPH.nodes.length)) * Math.PI * 2;
+      const cardPos = new THREE.Vector3(...(n.cardPos || [(col - 1.5) * 6.0, (0.5 - row) * 5.6, 0]));
+      const graphPos = new THREE.Vector3(...(n.graphPos || [Math.cos(angle) * 5.0, Math.sin(angle) * 3.5, Math.sin(angle * 2) * 2.2]));
+      const group = new THREE.Group();
+      group.position.copy(cardPos);
+      worldGroup.add(group);
+
+      const texDefault = drawBrowserCardTexture(label, 0);
+      const texLit = drawBrowserCardTexture(label, 1);
+      const cardMat = new THREE.MeshBasicMaterial({ map: texDefault, transparent: true, opacity: 0.94, side: THREE.DoubleSide });
+      const cardMesh = new THREE.Mesh(cardGeo, cardMat);
+      group.add(cardMesh);
+      const cardGlow = createGlowSprite('#00f0ff', 5.8, 0.0);
+      cardGlow.position.z = -0.15;
+      cardMesh.add(cardGlow);
+
+      const sphereMat = new THREE.MeshStandardMaterial({ color: 0x00e5ff, emissive: 0x0088cc, emissiveIntensity: 0.9, roughness: 0.2, metalness: 0.3 });
+      const sphereMesh = new THREE.Mesh(nodeSphereGeo, sphereMat);
+      sphereMesh.scale.setScalar(0.001);
+      group.add(sphereMesh);
+      const nodeHalo = createGlowSprite('#00f0ff', 2.6, 0.0);
+      sphereMesh.add(nodeHalo);
+
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0x00f0ff, side: THREE.DoubleSide, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      });
+      const pulseRing = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.66, 48), ringMat);
+      group.add(pulseRing);
+
+      const labelSprite = createLabelSprite(label, '#00f0ff');
+      labelSprite.position.set(0, 0.92, 0);
+      labelSprite.material.opacity = 0;
+      group.add(labelSprite);
+
+      const entity = { id, label, cardPos, graphPos, group, cardMesh, cardMat, texDefault, texLit, cardGlow,
+                       sphereMesh, sphereMat, nodeHalo, pulseRing, ringMat, labelSprite, visitedTime: Infinity };
+      nodeEntities.push(entity);
+      nodeMap.set(id, entity);
+    });
+
+    // Act 2: three explorer agents sharing one crawl queue
+    const agentConfigs = [
+      { color: '#00f0ff', waypoints: [{ node: '/', time: 8.6 }, { node: '/pricing', time: 10.6 }, { node: '/features', time: 12.6 }, { node: '/app', time: 14.6 }] },
+      { color: '#ff2a85', waypoints: [{ node: '/', time: 8.9 }, { node: '/app/invoices', time: 11.2 }, { node: '/app/invoices/new', time: 13.8 }] },
+      { color: '#ffb800', waypoints: [{ node: '/app', time: 9.2 }, { node: '/app/reports', time: 11.8 }, { node: '/app/settings', time: 14.4 }] }
+    ];
+    agentConfigs.forEach((ag) => ag.waypoints.forEach((wp) => {
+      const target = nodeMap.get(wp.node);
+      if (target && wp.time < target.visitedTime) { target.visitedTime = wp.time; target.visitColor = ag.color; }
+    }));
+    const agentMeshes = agentConfigs.map((cfg) => {
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(new THREE.SphereGeometry(0.28, 24, 24), new THREE.MeshBasicMaterial({ color: cfg.color })));
+      const halo = createGlowSprite(cfg.color, 3.2, 0.95);
+      g.add(halo);
+      g.visible = false;
+      worldGroup.add(g);
+      return { cfg, group: g, halo };
+    });
+
+    // Act 3/4: edges
+    const edgeEntities = [];
+    GRAPH.edges.forEach((e) => {
+      const fromNode = nodeMap.get(e.from), toNode = nodeMap.get(e.to);
+      const edgeGeo = new THREE.CylinderGeometry(0.045, 0.045, 1, 12, 1, true);
+      edgeGeo.translate(0, 0.5, 0);
+      edgeGeo.rotateX(Math.PI / 2);
+      const edgeMat = new THREE.MeshBasicMaterial({ color: 0x2868b8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const mesh = new THREE.Mesh(edgeGeo, edgeMat);
+      worldGroup.add(mesh);
+      const flowDot = createGlowSprite('#66e0ff', 0.75, 0);
+      worldGroup.add(flowDot);
+      const isShortestPath = (e.from === '/' && e.to === '/app') || (e.from === '/app' && e.to === '/app/reports');
+      edgeEntities.push({ fromNode, toNode, mesh, edgeMat, flowDot, isShortestPath });
+    });
+
+    const pathPulseSphere = new THREE.Group();
+    pathPulseSphere.add(new THREE.Mesh(new THREE.SphereGeometry(0.24, 24, 24), new THREE.MeshBasicMaterial({ color: 0xffffff })), createGlowSprite('#00f0ff', 3.6, 1.0));
+    pathPulseSphere.visible = false;
+    worldGroup.add(pathPulseSphere);
+
+    const redAlertPulse = new THREE.Group();
+    redAlertPulse.add(new THREE.Mesh(new THREE.SphereGeometry(0.26, 24, 24), new THREE.MeshBasicMaterial({ color: 0xff2a4b })), createGlowSprite('#ff2a4b', 4.0, 1.0));
+    redAlertPulse.visible = false;
+    worldGroup.add(redAlertPulse);
+
+    // Act 5/6: video screen showing the real Ledgerly reports page
+    const screenGroup = new THREE.Group();
+    screenGroup.visible = false;
+    worldGroup.add(screenGroup);
+    const screenCanvas = document.createElement('canvas');
+    screenCanvas.width = 1024; screenCanvas.height = 576;
+    const screenCtx = screenCanvas.getContext('2d');
+    const screenTex = new THREE.CanvasTexture(screenCanvas);
+    screenTex.colorSpace = THREE.SRGBColorSpace;
+
+    function updateVideoScreenCanvas(alertProgress) {
+      const ctx = screenCtx, w = 1024, h = 576;
+      const isStale = alertProgress > 0.25;
+      ctx.fillStyle = '#f6f7fb';
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, 58);
+      ctx.fillStyle = '#e4e7ef';
+      ctx.fillRect(0, 57, w, 2);
+      ctx.font = '800 24px "Segoe UI", sans-serif';
+      ctx.fillStyle = '#1d2433';
+      ctx.fillText('Ledger', 30, 38);
+      ctx.fillStyle = '#3b5bdb';
+      ctx.fillText('ly', 110, 38);
+      ctx.font = '500 17px "Segoe UI", sans-serif';
+      ctx.fillStyle = '#4a5368';
+      ['Dashboard', 'Invoices', 'Reports', 'Settings'].forEach((t, i) => ctx.fillText(t, 170 + i * 105, 36));
+      ctx.fillStyle = '#ff2a4b';
+      ctx.beginPath(); ctx.arc(915, 29, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillStyle = '#1d2433';
+      ctx.fillText('REC', 930, 35);
+
+      ctx.font = 'bold 34px "Segoe UI", sans-serif';
+      ctx.fillStyle = '#1d2433';
+      ctx.fillText('Cash-flow report', 60, 130);
+
+      // The cited button: "Export CSV" in the video, renamed to "Download CSV" by the release.
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = isStale ? '#ff2a4b' : '#ffb020';
+      ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.roundRect(780, 92, 190, 52, 10); ctx.fill(); ctx.stroke();
+      ctx.font = 'bold 19px "Segoe UI", sans-serif';
+      ctx.fillStyle = isStale ? '#c92a2a' : '#3b5bdb';
+      ctx.fillText(isStale ? 'Download CSV' : 'Export CSV', isStale ? 808 : 822, 125);
+
+      [['Paid', '$1,200'], ['Overdue', '$450'], ['Sent', '$2,300']].forEach(([k, v], i) => {
+        const x = 60 + i * 300;
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#e4e7ef';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.roundRect(x, 180, 270, 120, 14); ctx.fill(); ctx.stroke();
+        ctx.font = '500 18px "Segoe UI", sans-serif';
+        ctx.fillStyle = '#6b7385';
+        ctx.fillText(k, x + 22, 220);
+        ctx.font = '800 36px "Segoe UI", sans-serif';
+        ctx.fillStyle = '#1d2433';
+        ctx.fillText(v, x + 22, 270);
+      });
+
+      ctx.save();
+      ctx.translate(w / 2, 410);
+      ctx.fillStyle = isStale ? 'rgba(255, 42, 75, 0.85)' : 'rgba(29, 36, 51, 0.8)';
+      ctx.beginPath(); ctx.arc(0, 0, 50, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.moveTo(-14, -22); ctx.lineTo(24, 0); ctx.lineTo(-14, 22); ctx.closePath(); ctx.fill();
+      ctx.restore();
+
+      if (alertProgress > 0.05) {
+        ctx.save();
+        ctx.globalAlpha = clamp(alertProgress, 0, 1);
+        ctx.fillStyle = 'rgba(201, 28, 52, 0.95)';
+        ctx.beginPath(); ctx.roundRect(60, 488, 904, 54, 10); ctx.fill();
+        ctx.font = 'bold 20px ui-monospace, Consolas, monospace';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('Video says "Export CSV", product now says "Download CSV"', 88, 522);
+        ctx.restore();
+      }
+      ctx.strokeStyle = isStale ? '#ff2a4b' : '#00f0ff';
+      ctx.lineWidth = 8;
+      ctx.strokeRect(4, 4, w - 8, h - 8);
+      screenTex.needsUpdate = true;
+    }
+    updateVideoScreenCanvas(0);
+
+    const screenMesh = new THREE.Mesh(new THREE.PlaneGeometry(8.8, 4.95), new THREE.MeshBasicMaterial({ map: screenTex, transparent: true, side: THREE.DoubleSide }));
+    screenGroup.add(screenMesh);
+    const screenBackGlow = createGlowSprite('#00f0ff', 12.5, 0.45);
+    screenBackGlow.position.z = -0.25;
+    screenGroup.add(screenBackGlow);
+
+    const timeline3DGroup = new THREE.Group();
+    timeline3DGroup.position.set(0, -3.15, 0.05);
+    timeline3DGroup.visible = false;
+    screenGroup.add(timeline3DGroup);
+    const timelineCanvas = document.createElement('canvas');
+    timelineCanvas.width = 1024; timelineCanvas.height = 128;
+    {
+      const tl = timelineCanvas.getContext('2d');
+      tl.fillStyle = 'rgba(22, 6, 14, 0.95)';
+      tl.strokeStyle = '#ff2a4b';
+      tl.lineWidth = 4;
+      tl.beginPath(); tl.roundRect(6, 6, 1012, 116, 18); tl.fill(); tl.stroke();
+      tl.fillStyle = 'rgba(255, 255, 255, 0.16)';
+      tl.beginPath(); tl.roundRect(36, 72, 952, 24, 12); tl.fill();
+      tl.fillStyle = '#ff2a4b';
+      tl.beginPath(); tl.roundRect(560, 68, 220, 32, 8); tl.fill();
+      tl.font = 'bold 28px ui-monospace, Consolas, monospace';
+      tl.fillStyle = '#ff8fa3';
+      tl.fillText('VIDEO TIMELINE', 38, 46);
+      tl.fillStyle = '#ffffff';
+      tl.fillText('13.8s - 16.2s stale', 530, 46);
+    }
+    const timelineTex = new THREE.CanvasTexture(timelineCanvas);
+    timelineTex.colorSpace = THREE.SRGBColorSpace;
+    timeline3DGroup.add(new THREE.Mesh(new THREE.PlaneGeometry(8.8, 1.1), new THREE.MeshBasicMaterial({ map: timelineTex, transparent: true })));
+
+    // HUD
+    const $ = (id) => document.getElementById(id);
+    const ACTS = [
+      { start: 0.0,  end: 8.0,  tag: 'ACT 01 / 06', title: 'A product website', subtitle: 'Ledgerly, a sample invoicing app', color: '#00f0ff' },
+      { start: 8.0,  end: 16.5, tag: 'ACT 02 / 06', title: 'Explorer agents', subtitle: 'Three browser agents share one crawl queue stored in the graph', color: '#ff2a85' },
+      { start: 16.5, end: 25.5, tag: 'ACT 03 / 06', title: 'Stored in FalkorDB', subtitle: 'Pages become nodes, clicks become LEADS_TO edges', color: '#ffb800' },
+      { start: 25.5, end: 33.5, tag: 'ACT 04 / 06', title: 'Plan: export csv', subtitle: 'Full-text search finds the button; shortest path finds the route: / → /app → /app/reports', color: '#00f0ff' },
+      { start: 33.5, end: 41.5, tag: 'ACT 05 / 06', title: 'Record', subtitle: 'The route is replayed in a real browser and rendered as a narrated video', color: '#00ffaa' },
+      { start: 41.5, end: 47.0, tag: 'ACT 06 / 06', title: 'Release detected', subtitle: '"Export CSV" became "Download CSV": the graph traces it to 13.8s - 16.2s of the video', color: '#ff2a4b' },
+      { start: 47.0, end: 50.0, tag: 'COMPLETE', title: 'DemoGraph + FalkorDB', subtitle: 'Demo videos that know when they are wrong', color: '#00f0ff' }
+    ];
+    let activeActIndex = -1;
+    function updateHUD(t) {
+      $('time-readout').textContent = `${t.toFixed(1).padStart(4, '0')}s / ${TOTAL_DURATION.toFixed(1)}s`;
+      $('progress-inner').style.width = `${(t / TOTAL_DURATION) * 100}%`;
+      let idx = ACTS.findIndex((a) => t >= a.start && t < a.end);
+      if (t >= TOTAL_DURATION) idx = ACTS.length - 1;
+      if (idx !== -1 && idx !== activeActIndex) {
+        activeActIndex = idx;
+        const act = ACTS[idx];
+        $('act-tag').textContent = act.tag;
+        $('act-title').textContent = act.title;
+        $('act-subtitle').textContent = act.subtitle;
+        $('act-pill').style.color = act.color;
+        $('act-pill').style.borderColor = act.color;
+        $('act-dot').style.background = act.color;
+        $('act-dot').style.boxShadow = `0 0 10px ${act.color}`;
+      }
+      // the 3D timeline bar under the screen shows the stale seconds
+      $('finale-banner').classList.toggle('visible', t >= 47.2);
+    }
+
+    const tmpVecA = new THREE.Vector3(), tmpVecB = new THREE.Vector3();
+    const camPosTarget = new THREE.Vector3(), camLookTarget = new THREE.Vector3();
+    const rootNode = nodeMap.get('/'), appNode = nodeMap.get('/app'), reportsNode = nodeMap.get('/app/reports');
+
+    function frame(t) {
+      t = Math.min(t, TOTAL_DURATION);
+      updateHUD(t);
+      if (t >= TOTAL_DURATION) window.__done = true;
+
+      const morphT = easeInOutCubic(norm(t, 16.8, 20.5));
+      worldGroup.rotation.y = (t >= 16.5 && t < 33.5) ? Math.sin(norm(t, 16.5, 33.5) * Math.PI) * 0.65 : 0;
+
+      nodeEntities.forEach((node, i) => {
+        const enterT = easeOutBack(norm(t, i * 0.18, i * 0.18 + 1.4));
+        tmpVecA.copy(node.cardPos);
+        tmpVecA.y += Math.sin(t * 1.6 + i * 0.9) * 0.18 * (1 - morphT);
+        tmpVecB.copy(node.graphPos);
+        tmpVecB.y += Math.cos(t * 1.4 + i * 1.1) * 0.1 * morphT;
+        node.group.position.lerpVectors(tmpVecA, tmpVecB, morphT);
+
+        const cardScale = enterT * (1 - morphT);
+        node.cardMesh.visible = cardScale > 0.01;
+        node.cardMesh.scale.setScalar(Math.max(0.001, cardScale));
+
+        const isVisited = t >= node.visitedTime;
+        const wantMap = isVisited ? node.texLit : node.texDefault;
+        if (node.cardMat.map !== wantMap) { node.cardMat.map = wantMap; node.cardMat.needsUpdate = true; }
+        if (isVisited && morphT < 0.98) {
+          const flash = Math.exp(-(t - node.visitedTime) * 2.5) * 0.6;
+          node.cardGlow.material.opacity = (0.45 + flash) * (1 - morphT);
+          node.cardGlow.material.color.set(node.visitColor || '#00f0ff');
+        } else {
+          node.cardGlow.material.opacity = 0;
+        }
+
+        const sphereScale = easeOutBack(norm(t, 17.2 + i * 0.08, 19.5 + i * 0.08));
+        node.sphereMesh.visible = sphereScale > 0.01;
+        const isPathNode = node.id === '/' || node.id === '/app' || node.id === '/app/reports';
+        const isReportsNode = node.id === '/app/reports';
+        const act4Weight = norm(t, 25.5, 27.0) * (1 - norm(t, 34.0, 35.5));
+        const dimFactor = (act4Weight > 0 && !isPathNode) ? 1.0 - 0.65 * act4Weight : 1.0;
+
+        let nodeColor = 0x00e5ff;
+        let haloOpacity = 0.75 * sphereScale * dimFactor;
+        let finalSphereScale = sphereScale;
+        node.ringMat.color.setHex(0x00f0ff);
+        if (t >= 25.5 && t < 41.5) {
+          if (isReportsNode) {
+            const pulse = 1 + 0.35 * Math.sin((t - 25.5) * 7.0);
+            finalSphereScale *= pulse;
+            nodeColor = 0x00ffbb;
+            haloOpacity = 1.0;
+            node.ringMat.opacity = (0.5 + 0.5 * Math.sin((t - 25.5) * 7.0)) * (1 - norm(t, 35.5, 37.0));
+            node.pulseRing.scale.setScalar(1 + ((t * 2.2) % 1.8));
+          } else if (isPathNode) {
+            nodeColor = 0x00ffff;
+            haloOpacity = 0.95;
+          }
+        } else {
+          node.ringMat.opacity = 0;
+        }
+        if (t >= 41.5 && isReportsNode) {
+          nodeColor = 0xff2a4b;
+          finalSphereScale *= 1 + 0.3 * Math.sin((t - 41.5) * 9.0);
+          haloOpacity = 1.0;
+          node.ringMat.color.setHex(0xff2a4b);
+          node.ringMat.opacity = 0.85;
+          node.pulseRing.scale.setScalar(1 + (((t - 41.5) * 2.6) % 2.4));
+        }
+        node.sphereMesh.scale.setScalar(Math.max(0.001, finalSphereScale));
+        node.sphereMat.color.setHex(nodeColor);
+        node.sphereMat.emissive.setHex(nodeColor);
+        node.nodeHalo.material.color.setHex(nodeColor);
+        node.nodeHalo.material.opacity = haloOpacity;
+        const hideForScreen = isReportsNode ? norm(t, 35.5, 36.8) * (1 - norm(t, 41.5, 42.5)) : 0;
+        node.labelSprite.material.opacity = sphereScale * dimFactor * (1 - hideForScreen);
+      });
+
+      const agentsActive = t >= 8.0 && t <= 17.2;
+      const agentFade = norm(t, 8.0, 8.6) * (1 - norm(t, 16.2, 17.2));
+      agentMeshes.forEach(({ cfg, group, halo }) => {
+        group.visible = agentsActive;
+        if (!agentsActive) return;
+        halo.material.opacity = 0.95 * agentFade;
+        const wps = cfg.waypoints;
+        if (t <= wps[0].time) {
+          group.position.copy(nodeMap.get(wps[0].node).group.position).add(new THREE.Vector3(0, 0, 0.7));
+          return;
+        }
+        for (let i = 0; i < wps.length - 1; i++) {
+          const curr = wps[i], next = wps[i + 1];
+          if (t >= curr.time && t <= next.time) {
+            const segP = easeInOutCubic(norm(t, curr.time, next.time));
+            group.position.lerpVectors(nodeMap.get(curr.node).group.position, nodeMap.get(next.node).group.position, segP);
+            group.position.z += Math.sin(segP * Math.PI) * 2.2 + 0.6;
+            return;
+          }
+        }
+        group.position.copy(nodeMap.get(wps[wps.length - 1].node).group.position).add(new THREE.Vector3(0, 0, 0.7));
+      });
+
+      edgeEntities.forEach((edge, idx) => {
+        const edgeDraw = easeOutCubic(norm(t, 19.2 + idx * 0.22, 21.2 + idx * 0.22));
+        if (edgeDraw <= 0.001) { edge.mesh.visible = false; edge.flowDot.visible = false; return; }
+        edge.mesh.visible = true;
+        edge.flowDot.visible = true;
+        const startPos = edge.fromNode.group.position, endPos = edge.toNode.group.position;
+        const curLen = Math.max(0.001, tmpVecA.subVectors(endPos, startPos).length() * edgeDraw);
+        edge.mesh.position.copy(startPos);
+        edge.mesh.lookAt(endPos);
+        const inPathAct = t >= 25.5 && t < 41.5;
+        if (inPathAct && edge.isShortestPath) {
+          edge.edgeMat.color.setHex(0x00f0ff);
+          edge.edgeMat.opacity = 0.92;
+          edge.mesh.scale.set(2.2, 2.2, curLen);
+        } else {
+          edge.edgeMat.color.setHex(0x2b6cb0);
+          edge.edgeMat.opacity = inPathAct ? 0.16 : 0.48 * edgeDraw;
+          edge.mesh.scale.set(1, 1, curLen);
+        }
+        const flowP = (t * 0.55 + idx * 0.19) % 1;
+        edge.flowDot.position.lerpVectors(startPos, endPos, flowP * edgeDraw);
+        edge.flowDot.material.opacity = edge.edgeMat.opacity * 1.1;
+      });
+
+      if (t >= 26.0 && t < 34.5) {
+        pathPulseSphere.visible = true;
+        const cycle = ((t - 26.0) / 2.2) % 1;
+        if (cycle < 0.5) pathPulseSphere.position.lerpVectors(rootNode.group.position, appNode.group.position, easeInOutCubic(cycle * 2));
+        else pathPulseSphere.position.lerpVectors(appNode.group.position, reportsNode.group.position, easeInOutCubic((cycle - 0.5) * 2));
+      } else {
+        pathPulseSphere.visible = false;
+      }
+
+      if (t >= 35.8) {
+        screenGroup.visible = true;
+        const repPos = reportsNode.group.position;
+        const offsetToSide = easeInOutCubic(norm(t, 41.5, 43.0));
+        screenGroup.position.set(repPos.x + offsetToSide * 3.4, repPos.y + offsetToSide * 0.3, repPos.z + 1.2);
+        screenGroup.scale.setScalar(Math.max(0.001, easeOutBack(norm(t, 36.2, 38.4))));
+        if (t >= 42.1 && t <= 43.5) {
+          redAlertPulse.visible = true;
+          redAlertPulse.position.lerpVectors(repPos, screenGroup.position, easeInOutCubic(norm(t, 42.1, 43.3)));
+        } else {
+          redAlertPulse.visible = false;
+        }
+        const alertState = norm(t, 43.0, 43.8);
+        updateVideoScreenCanvas(alertState);
+        if (alertState > 0.1) {
+          screenBackGlow.material.color.setHex(0xff2a4b);
+          timeline3DGroup.visible = true;
+          timeline3DGroup.scale.setScalar(Math.max(0.001, easeOutBack(norm(t, 43.1, 44.0))));
+        } else {
+          screenBackGlow.material.color.setHex(0x00f0ff);
+          timeline3DGroup.visible = false;
+        }
+      } else {
+        screenGroup.visible = false;
+        redAlertPulse.visible = false;
+      }
+
+      if (t < 8.0) {
+        const p = easeInOutCubic(norm(t, 0, 8.0));
+        camPosTarget.set(Math.sin(p * Math.PI - 0.5) * 2.4, 0.4, 21.5 - p * 1.2);
+        camLookTarget.set(0, 0.2, 0);
+      } else if (t < 16.5) {
+        const p = easeInOutCubic(norm(t, 8.0, 16.5));
+        camPosTarget.set(Math.cos(p * Math.PI) * 2.0, 0.3, 20.8);
+        camLookTarget.set(0, 0.1, 0);
+      } else if (t < 25.5) {
+        camPosTarget.set(0, 0.8, 17.5);
+        camLookTarget.set(0, 0.0, 0);
+      } else if (t < 33.5) {
+        const p = easeInOutCubic(norm(t, 25.5, 33.5));
+        camPosTarget.set(1.5 * p, 0.6, 16.2 - p * 1.2);
+        camLookTarget.set(1.2 * p, 0.2 * (1 - p), 0.5 * p);
+      } else if (t < 41.5) {
+        const flyP = easeInOutCubic(norm(t, 33.5, 37.2));
+        const pRoot = rootNode.group.position, pApp = appNode.group.position, pRep = reportsNode.group.position;
+        if (flyP < 0.5) tmpVecA.lerpVectors(pRoot, pApp, flyP * 2);
+        else tmpVecA.lerpVectors(pApp, pRep, (flyP - 0.5) * 2);
+        const settle = easeInOutCubic(norm(t, 36.5, 38.8));
+        camPosTarget.set(
+          THREE.MathUtils.lerp(tmpVecA.x, pRep.x, settle),
+          THREE.MathUtils.lerp(tmpVecA.y + 0.6, pRep.y, settle),
+          THREE.MathUtils.lerp(tmpVecA.z + 6.5, pRep.z + 11.0, settle));
+        camLookTarget.set(pRep.x, pRep.y - 0.15, pRep.z + 1.2);
+      } else {
+        const p = easeInOutCubic(norm(t, 41.5, 43.5));
+        const pRep = reportsNode.group.position;
+        camPosTarget.set(pRep.x + 1.8 * p, pRep.y - 0.6 * p, pRep.z + 11.0 + 2.2 * p);
+        camLookTarget.set(pRep.x + 2.1 * p, pRep.y - 0.45 * p, pRep.z + 1.0);
+      }
+      camera.position.lerp(camPosTarget, 0.08);
+      controls.target.lerp(camLookTarget, 0.08);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    if (CAPTURE) {
+      window.__step = (t) => frame(t);  // capture script calls this once per video frame
+      window.__ready = true;
+    } else {
+      const clock = new THREE.Clock();
+      const loop = () => { requestAnimationFrame(loop); frame(clock.getElapsedTime()); };
+      loop();
+    }
+  </script>
+</body>
+</html>
