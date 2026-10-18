@@ -1,184 +1,136 @@
 # DemoGraph
 
-**A product's living knowledge graph, explored by browser agents and stored in FalkorDB. Seven agents use it to make demo videos, guides, tests, and release notes, and to rebuild them by themselves whenever the product changes.**
+**Product demos, guides, tests and release notes that keep themselves true, built on a FalkorDB knowledge graph.**
 
-Built for [Graph Hacks: Context for AI Agents](https://www.wemakedevs.org/hackathons/falkordb) (WeMakeDevs × FalkorDB, Oct 15–18, 2026).
-Tracks: **01 Agents That Act on Connected Data** and **02 Agent Memory and Coordination**.
+DemoGraph sends browser agents through a web product, stores everything they see in FalkorDB, and uses that
+graph to produce narrated demo videos, step-by-step guides, Playwright tests and release notes. Every sentence
+in a video or guide cites the page element it is about. When the product changes, the graph shows exactly which
+artifacts are now wrong, down to the seconds of a video, and the watcher rebuilds them automatically.
 
-> Status: all seven agents work end to end and are covered by 16 end-to-end tests against a real FalkorDB.
-> Also tried on a real public site (books.toscrape.com, a site made for scraping practice).
+Built for [Graph Hacks: Context for AI Agents](https://www.wemakedevs.org/hackathons/falkordb)
+(WeMakeDevs × FalkorDB, October 15–18, 2026).
 
-## Seven agents, one graph
+**Tracks:** 01 · Agents That Act on Connected Data &nbsp;·&nbsp; 02 · Agent Memory and Coordination
 
-| Agent | What it does | Reads / writes in FalkorDB | Command |
-|---|---|---|---|
-| **Orchestrator** | Runs the whole pipeline for a product; a failing goal is reported and skipped | `(:Run)-[:USED]->(:Crawl)`, `(:Run)-[:PRODUCED]->(:Demo)` | `run` |
-| **Explorer** | Several agents crawl the product in real Chromium, sharing one queue in the graph | `FRONTIER`, `VISITED`, `Page`, `Element`, `LEADS_TO` | `explore` |
-| **Knowledge Graph** | Remembers every crawl: diffs facts, reuses known clicks, retires dead links | `CHANGED_IN`, `FOLLOWS`, `LEADS_TO.stale`, click memory on `Element` | (part of `explore`) |
-| **Demo** | Finds a feature (full-text index), routes to it (`algo.SPpaths`), films a narrated video | `Demo`, `Scene`, `CITES {hash}`, `Video`, `SHOWS {start, end}` | `plan`, `record` |
-| **Documentation** | Writes a step-by-step guide from the same verified replay | `(:Doc)-[:SHOWS {section}]->(:Scene)` | `document` (and every `record`) |
-| **QA** | Generates and runs Playwright regression tests (one per demo) and smoke tests (one per page) | `(:TestSuite)-[:CHECKS {hash}]->(:Element)`, `TestRun` | `qa` |
-| **Release Intelligence** | Writes release notes: what changed, and every demo, video, guide and test it affected | `(:ReleaseNote)-[:DESCRIBES]->(:Crawl)` | `release` |
+**Demo video:** [docs/submission/demograph_submission.mp4](docs/submission/demograph_submission.mp4) (2:52)
 
-The **watcher** (`watch`) ties them together after a release: re-crawl, find stale demos with one query,
-rebuild each one locked onto the same element by fact id (so a renamed button is still the same button),
-re-record its video and guide, regenerate its tests, and write release notes. It retires duplicates, marks a
-demo broken when its element is gone, and finishes any rebuild that was interrupted.
+![DemoGraph Studio](docs/ui/dashboard.png)
 
-## Why a graph
+---
 
-Product demos go out of date the moment the product changes, and AI-made demos make things up. To avoid
-both, an agent has to know three connected things:
+## Contents
+
+1. [The problem](#the-problem)
+2. [How it works](#how-it-works)
+3. [The seven agents](#the-seven-agents)
+4. [How a change is traced](#how-a-change-is-traced)
+5. [Graph data model](#graph-data-model)
+6. [Cypher the product depends on](#cypher-the-product-depends-on)
+7. [Run it](#run-it)
+8. [Live dashboard](#live-dashboard)
+9. [Results](#results)
+10. [Which websites it works on](#which-websites-it-works-on)
+11. [Testing](#testing)
+12. [Project layout](#project-layout)
+13. [Data, safety and rules](#data-safety-and-rules)
+14. [Prior work and AI disclosure](#prior-work-and-ai-disclosure)
+
+---
+
+## The problem
+
+Product demo videos and guides go out of date as soon as the product changes. A button is renamed, a price
+moves, and the video keeps showing the old one. Nobody re-watches every video after every release, and
+AI-generated demos can describe things that were never there.
+
+Avoiding both needs connected knowledge:
 
 - **how screens connect**: which click on which page leads where
-- **what each screen says**: the prices, labels, and claims a video would repeat
-- **what changed between releases**, and so which videos cited something that is no longer true
+- **what each screen says**: the labels, prices and claims a video repeats
+- **what changed between releases**, and which videos, guides and tests depended on it
 
-Those are relationships, so DemoGraph keeps them in FalkorDB and the agents read and write the graph on
-every step. Without FalkorDB the Explorer has no work queue, no memory of earlier crawls, and no change
-history. The graph is what the product runs on.
+These are relationships, so DemoGraph keeps them in a graph. FalkorDB is not a side store: the agents' work
+queue, memory, search, route planning and change tracking all run on it. Take FalkorDB away and none of the
+agents can work.
 
-## What works today
+## How it works
 
-- **Explorer agents** open the product in real Chromium (Playwright). They read every visible fact,
-  follow links, click buttons, fill and submit forms with clearly fake data, and record what each action did.
-- **Shared work queue in the graph.** Agents claim pages through `(:Crawl)-[:FRONTIER]->(:Page)` edges.
-  FalkorDB runs write queries one at a time per graph, so a claim is atomic and no page is visited twice.
-  More agents can join a running crawl from another process (`--join`).
-- **Memory across sessions.** Each crawl remembers what every page said and what every button did. On the
-  next crawl, unchanged pages are confirmed without rewriting, and buttons are not clicked again unless they
-  or their form changed.
-- **Crash-safe.** If a crawl is killed, `--resume` puts its unfinished pages back in the queue and carries on.
-- **Change detection.** Every changed, added, or removed fact gets a `CHANGED_IN` edge to the crawl that
-  saw it, with the old and new text.
-- **Safe by default.** Buttons like *Delete*, *Pay*, *Cancel*, or *Log out* are never clicked. Clicking and
-  form submission are only on for local apps (`localhost`, `*.test`) unless you pass `--interact`, and
-  `robots.txt` is respected for public sites.
-- **One graph per product** (`demograph_<host>_<port>`), using FalkorDB's multi-graph support.
-- **Demo planner.** Ask for a feature in plain words (`"export csv"`, `"create an invoice"`). The planner
-  finds the element with FalkorDB's full-text index, routes to it from the start page with weighted
-  `algo.SPpaths` (a form submit costs more than a click, and links that no longer exist are never used),
-  and turns every hop into a scene. Each scene **cites the exact elements** it shows or talks about, and a
-  scene that mentions a number nothing it cites contains is rejected before saving.
-- **Stale demos.** Each citation stores the element's content hash at planning time. After the next crawl,
-  one query lists which scenes of which demos now show something different.
-- **Watcher (autopilot).** `demograph watch <url> --every 60` re-crawls on a schedule. When something
-  changed it rebuilds every affected demo, re-records its video and guide, regenerates its tests and writes
-  release notes. History stays in the graph: `(:Demo new)-[:SUPERSEDES]->(:Demo old)` and
-  `(:Crawl)-[:TRIGGERED]->(:Demo new)`.
-- **QA tests from the graph.** Generated pytest files replay each demo and assert every cited element; smoke
-  tests check every page and its heading. After a release they fail with the exact reason, for example
-  `scene 3: live page says "Export CSV", scene cites "Download CSV"`, until the watcher regenerates them.
-- **Recorder.** Replays a planned demo in real Chromium, checks that every cited element on the live page
-  still says exactly what the scene cites, and renders a narrated 1280×720 MP4. Each scene eases the camera
-  in on the elements it cites, rings them, puts a cursor on whatever gets clicked, and shows the narration as
-  captions. Voiceover uses Microsoft Edge neural voices. The video's per-scene timeline goes into the graph,
-  so after a release DemoGraph can say **which seconds of which video** are now wrong. It refuses to record
-  a demo the graph marks stale or that the live product contradicts.
+```
+                    ┌──────────────────────── Orchestrator ────────────────────────┐
+                    │                                                               │
+  web product ──▶ Explorer agents ──▶ Knowledge Graph ──▶ Demo ──▶ Documentation ──▶ QA ──▶ Release notes
+  (real Chromium)   (shared queue)      (FalkorDB)      (video)     (guide)        (tests)   (what changed)
+                                            ▲                                                  │
+                                            └──────────── Watcher: re-crawl, rebuild ◀─────────┘
+```
 
-Measured on the included sample app (21 pages, 3 agents):
+1. **Explore.** Several browser agents crawl the product in parallel. They read every visible element, follow
+   links, click buttons and submit forms (with fake data, on apps you own) and record where each action leads.
+2. **Remember.** Every page, element and link becomes a node or edge. Each new crawl is compared with the last
+   one, and every difference is recorded with its old and new text.
+3. **Plan.** Ask for a feature in plain words ("export csv"). Full-text search finds the element, and a weighted
+   shortest path finds the route to it from the start page.
+4. **Record and document.** The route is replayed in a real browser. Every cited element is checked on the live
+   page first. The result is a narrated MP4 that zooms in on each cited element, and a matching step-by-step guide.
+5. **Test.** Playwright regression tests (one per demo) and smoke tests (one per page) are generated from the
+   graph and run.
+6. **Watch.** On a schedule, the product is re-crawled. When something changed, every affected demo is rebuilt:
+   new route, new video, new guide, new tests, and release notes describing it all.
 
-| Crawl | What happened | Pages unchanged | Clicks run | Clicks reused from graph |
+## The seven agents
+
+Each agent reads what the previous one wrote to the graph. The dashboard's **agent pipeline** shows these
+handoffs live.
+
+| # | Agent | Input | Output (written to FalkorDB) | Command |
 |---|---|---|---|---|
-| 1 | first crawl | 0 | 16 | 0 |
-| 2 | nothing changed | 21 | 0 | 16 |
-| 3 | Pro price $29→$35, "New invoice" renamed | 10 | 8 | 8 |
+| 1 | **Orchestrator** | a site and a list of goals | runs agents 2–7 in order; a failing goal is reported and skipped. `(:Run)-[:PRODUCED]->(:Demo)` | `run` |
+| 2 | **Explorer** | a start URL | pages, elements and links. Agents claim pages from a shared `(:Crawl)-[:FRONTIER]->(:Page)` queue, so no page is read twice | `explore` |
+| 3 | **Knowledge Graph** | each page the Explorer reads | the diff against the last crawl (`CHANGED_IN {old_text, new_text}`), click memory (known buttons are not clicked again), retired links (`LEADS_TO.stale`) | part of `explore` |
+| 4 | **Demo** | a goal in plain words | a route (full-text search plus `algo.SPpaths`), scenes that cite elements (`(:Scene)-[:CITES {hash}]->(:Element)`), and a narrated, captioned MP4 with its timeline (`(:Video)-[:SHOWS {start, end}]->(:Scene)`) | `plan`, `record` |
+| 5 | **Documentation** | the Demo agent's verified replay | `guide.md` and `guide.html` with annotated screenshots, one step per scene. `(:Doc)-[:SHOWS {section}]->(:Scene)` | `document` (and every `record`) |
+| 6 | **QA** | demos and the latest crawl | runnable pytest files (regression and smoke), linked to every element they assert. `(:TestSuite)-[:CHECKS {hash}]->(:Element)`, `(:TestRun)` | `qa` |
+| 7 | **Release Intelligence** | a crawl and the one before it | release notes: what changed on which page, and which demos, videos, guides and tests it affected. `(:ReleaseNote)-[:DESCRIBES]->(:Crawl)` | `release` |
 
-Crawl 3 reported exactly 11 changes, on the pages where the price or label appears:
+The **watcher** (`watch`) runs the loop after a release. It rebuilds each stale demo **locked onto the same
+element by its fact id**, so a renamed button is still recognised as the same button. Then it re-records the
+video and guide, regenerates the tests and writes release notes. It also:
 
-```
-CHANGED  /pricing        price   '$29' -> '$35'
-CHANGED  /app/settings   price   '$29 a month' -> '$35 a month'
-CHANGED  /app            button  'New invoice' -> 'Create an invoice'
-CHANGED  /signup         input   'Plan: Starter · $9/month | Pro · $29/month | ...' -> '... Pro · $35/month ...'
-...
-```
+- keeps one current demo per goal and retires duplicates;
+- marks a demo **broken** when the element it showed no longer exists, instead of re-targeting it to some other text;
+- finishes any rebuild that was interrupted;
+- records history in the graph: `(:Demo new)-[:SUPERSEDES]->(:Demo old)` and `(:Crawl)-[:TRIGGERED]->(:Demo new)`.
 
-### A planned demo
+## How a change is traced
 
-```
-$ python -m demograph plan http://127.0.0.1:8765 "create an invoice"
-Target   button “Create invoice” on /app/invoices/new  (full-text score 11, 5 reachable matches considered)
-Route    cost 5 via algo.SPpaths over LEADS_TO
-         / --link “Demo workspace”--> /app --click “New invoice”--> /app/invoices/new
-           --submit “Create invoice”--> /app/invoices?created=INV-2001
-Scenes
-  0  intro     /                  This is Ledgerly. “Invoices that chase themselves.”
-  1  navigate  /                  Click “Demo workspace” to open the Dashboard page.
-  2  navigate  /app               Click “New invoice” to open the New invoice page.
-  3  form      /app/invoices/new  Fill in Client, Amount and Due date, then click “Create invoice”.
-  4  result    /app/invoices?...  Ledgerly shows “Invoice INV-2001 created and sent.”
-Saved    demo-create-an-invoice-719b: 5 scenes, 8 citations -> graph + data/demos/demo-create-an-invoice-719b.json
-```
+Every element has two identifiers:
 
-Each scene also carries replayable browser steps (click, fill, select, with the expected URL after each
-click) and a zoom box around what it cites, for the recorder.
+- **fact id**: a hash of the page URL and the element's CSS selector. It says *which element*.
+- **content hash**: a hash of what the element says right now. It says *what it says*.
 
-After renaming the "New invoice" button and crawling again:
+A scene stores the content hash of each element it cites when it is planned. After a release:
 
 ```
-$ python -m demograph demos http://127.0.0.1:8765
-  demo-change-plan-4e99              'change plan'            up to date
-  demo-create-an-invoice-719b        'create an invoice'      1 of 5 scenes STALE
-      scene 2 navigate  click 'New invoice' is now 'Create an invoice'
-  demo-export-csv-97f3               'export csv'             up to date
+Element "Export CSV"  ──CHANGED_IN {old: "Export CSV", new: "Download CSV"}──▶  Crawl #N
+        ▲
+        │ CITES {hash: old}                      (hash no longer matches)
+Scene 3 "Click “Export CSV”."
+        ▲
+        │ SHOWS {start: 17.5, end: 20.9}
+Video demo-export-csv.mp4                    ⇒  seconds 17.5–20.9 are wrong
+Doc guide.html, step 4                       ⇒  this step is wrong
+TestSuite test_demo_export_csv.py            ⇒  this test will fail
 ```
-
-### A rendered video
-
-```
-$ python -m demograph record http://127.0.0.1:8765 demo-create-an-invoice-719b
-Voiceover for 5 scenes (en-US-AriaNeural)
-Replaying the demo in Chromium and checking every citation on the live page
-Rendering
-Video    data/videos/demograph_127_0_0_1_8765/demo-create-an-invoice-719b/demo-create-an-invoice-719b.mp4  (31.6s)
-           2.2s -   7.8s  demo-create-an-invoice-719b-s0
-           7.8s -  12.5s  demo-create-an-invoice-719b-s1
-          12.5s -  16.9s  demo-create-an-invoice-719b-s2
-          16.9s -  22.6s  demo-create-an-invoice-719b-s3
-          22.6s -  28.4s  demo-create-an-invoice-719b-s4
-Graph    (:Video)-[:SHOWS {start, end}]-> 5 scenes, 8 citations verified live
-```
-
-![Frames from the rendered create-invoice demo](docs/proof-run/create-an-invoice-frames.jpg)
-
-The full video is [docs/proof-run/create-an-invoice.mp4](docs/proof-run/create-an-invoice.mp4) (31.6 s, with
-voiceover and [captions](docs/proof-run/create-an-invoice.srt)). Every frame is a screenshot from the live
-replay. Nothing is mocked up. Each recording also keeps the unedited browser session as `raw-session.webm`.
-
-After the "Export CSV" button is renamed to "Download CSV" and the product is crawled again (a real run,
-recorded with `--silent`):
 
 ```
 $ python -m demograph demos http://127.0.0.1:8765
-  demo-export-csv-9b33               'export csv'             2 of 5 scenes STALE  (1 video)
+  demo-export-csv-9b33   'export csv'   2 of 5 scenes STALE  (1 video)
       scene 3 action    click 'Export CSV' is now 'Download CSV'
       scene 4 result    confirmation after clicking an element that is now 'Download CSV'
 
 Video seconds that no longer match the product:
   .../demo-export-csv-9b33.mp4  13.8s-16.2s  scene 3: says “Export CSV”, the product now says “Download CSV”
-  .../demo-export-csv-9b33.mp4  16.2s-21.3s  scene 4: shows what happens after clicking an element that now says “Download CSV”
 ```
-
-The re-crawl that found this ran 1 click and reused 15 from graph memory.
-
-### Live dashboard
-
-```bash
-.venv/Scripts/python -m demograph ui http://127.0.0.1:8765     # then open http://127.0.0.1:8800
-```
-
-![DemoGraph Studio dashboard](docs/ui/dashboard.png)
-
-A web page that reads FalkorDB every 0.6 s and animates the work as it happens:
-
-- **Explore live:** pages appear in the graph as agents discover them. Each agent's dot moves to the page it is
-  scraping, the page pulses while it is read, and it turns cyan once stored. Screenshots and the crawl log stream
-  in the side panel.
-- **Plan route:** the weighted shortest path to the feature glows on the graph, and the scenes and their
-  citations are listed beside it.
-- **Record video:** the narrated MP4 renders and plays in the panel. After a release, stale video seconds are
-  listed in red.
 
 ## Graph data model
 
@@ -190,25 +142,20 @@ graph LR
   Crawl -->|"VISITED {agent, unchanged}"| Page
   Agent -->|"EXPLORED {crawl}"| Page
   Page -->|HAS_ELEMENT| Element
-  Page -->|"LEADS_TO {via, action, label, inputs}"| Page2[Page]
+  Page -->|"LEADS_TO {via, action, cost, stale}"| Page2[Page]
   Element -->|OPENS| Page2
-  Page -->|REDIRECTS_TO| Page2
   Element -->|"CHANGED_IN {kind, old_text, new_text}"| Crawl
   Demo -->|PLANNED_FROM| Crawl
   Demo -->|TARGETS| Element
   Demo -->|"HAS_SCENE {index}"| Scene
-  Scene -->|NEXT| Scene2[Scene]
   Scene -->|ON_PAGE| Page
   Scene -->|"CITES {role, hash, text}"| Element
   Video -->|RENDERS| Demo
-  Video -->|VERIFIED_AGAINST| Crawl
   Video -->|"SHOWS {start, end}"| Scene
   Doc -->|DOCUMENTS| Demo
   Doc -->|"SHOWS {section}"| Scene
   NewDemo[Demo] -->|SUPERSEDES| Demo
   Crawl -->|TRIGGERED| NewDemo
-  Crawl -->|BROKE| Demo
-  TestSuite -->|COVERS| Demo
   TestSuite -->|"CHECKS {hash}"| Element
   TestRun -->|RAN| TestSuite
   ReleaseNote -->|DESCRIBES| Crawl
@@ -218,35 +165,63 @@ graph LR
 | Node | Key properties |
 |---|---|
 | `Site` | `id` (origin), `root_url` |
-| `Crawl` | `id`, `status` (running/finalizing/completed), `max_pages`, `max_depth`, `interact`, `capped`, `clicks_run`, `clicks_reused` |
-| `Page` | `id` (hash of normalized URL), `url`, `path`, `title`, `fingerprint`, `screenshot`, `gone` |
-| `Element` | `id` = **fact id** (hash of URL + CSS selector), `selector`, `kind` (heading/text/price/link/button/input), `text`, `href`, `options`, `form`, `is_submit`, `bbox`, `content_hash`, `click_effect`, `click_target_url`, `click_note`, `click_inputs` |
+| `Crawl` | `id`, `status` (running / finalizing / completed), `max_pages`, `max_depth`, `capped`, `clicks_run`, `clicks_reused` |
+| `Page` | `id` (hash of the normalized URL), `url`, `path`, `title`, `fingerprint`, `screenshot`, `gone` |
+| `Element` | `id` = fact id, `selector`, `kind` (heading/text/price/link/button/input), `text`, `href`, `bbox`, `content_hash`, `click_effect`, `click_note` |
 | `Agent` | `id`, `kind` |
-| `Demo` | `id`, `goal`, `path_cost`, `scenes`, `start_path`, `target_text` |
-| `Scene` | `id`, `index`, `kind` (intro/navigate/form/action/result/highlight), `narration`, `steps` (JSON), `screenshot`, `zoom`, `page_title` |
-| `Video` | `id`, `path`, `duration`, `voice`, `captions`, `raw_recording`, `verified`, `rendered_at` |
-| `Doc` | `id`, `path` (Markdown), `html`, `title`, `rendered_at`, `verified` |
-| `TestSuite` / `TestRun` | `kind` (regression/smoke), `path`, `tests`, `last_passed`, `last_failed` / `passed`, `failed`, `failures` |
-| `ReleaseNote` | `id`, `path`, `changes`, `summary` |
-| `Run` | `id`, `goals`, `status`, `report`, `failures` |
+| `Demo` | `id`, `goal`, `status` (current / superseded / broken), `path_cost`, `target_text` |
+| `Scene` | `index`, `kind` (intro/navigate/form/action/result/highlight), `narration`, `steps` (JSON), `zoom` |
+| `Video` | `path`, `duration`, `voice`, `captions`, `raw_recording` |
+| `Doc` | `path` (Markdown), `html`, `title` |
+| `TestSuite` / `TestRun` | `kind` (regression/smoke), `path`, `tests` / `passed`, `failed`, `failures` |
+| `ReleaseNote` | `summary`, `changes`, `path` |
+| `Run` | `goals`, `status`, `report` |
 
-`Demo.status` is `current`, `superseded` (replaced by a rebuild) or `broken` (its element is gone).
-
-`LEADS_TO` edges also carry `cost` (1 for a link or click, 3 for a form submit, 1000 once stale) and
-`stale`. `CITES.hash` is the element's content hash when the scene was planned.
-
-**Drift = same fact id, new content hash.** The fact id says *which element*; the content hash says *what it
-says now*.
-
-Constraints and indexes ([demograph/schema.py](demograph/schema.py)): unique `id` on every node label, range
-indexes on `Crawl.status`, `Page.path`, `Element.kind`, `[:FRONTIER].status`, `[:LEADS_TO].via`,
-`[:CHANGED_IN].kind`, and a full-text index on `Element.text`.
+`LEADS_TO.cost` is 1 for a link or click, 3 for a form submit, and 1000 once the link has disappeared, so the
+planner never routes through it. One graph per product (`demograph_<host>_<port>`) uses FalkorDB's
+multi-graph support. Unique constraints exist on every node id, with range indexes on frontier status, page
+path, element kind and change kind, and a full-text index on `Element.text`
+([demograph/schema.py](demograph/schema.py)).
 
 ## Cypher the product depends on
 
-All queries live in [demograph/queries.py](demograph/queries.py). The planner's:
+All queries live in [demograph/queries.py](demograph/queries.py). The snippets below are generated from that
+file.
 
-**Find the element a goal is about** (full-text index over everything the product says):
+**Explorer: claim the next page from the shared queue.** Writes run one at a time per graph in FalkorDB, so
+this match-then-set is atomic and two agents can never claim the same page.
+
+```cypher
+MATCH (c:Crawl {id: $crawl_id, status: 'running'})
+OPTIONAL MATCH (c)-[taken:FRONTIER]->()
+WHERE taken.status IN ['claimed', 'done']
+WITH c, count(taken) AS taken
+WHERE taken < c.max_pages
+MATCH (c)-[f:FRONTIER {status: 'pending'}]->(p:Page)
+WITH f, p
+ORDER BY f.depth ASC, f.queued_at ASC
+LIMIT 1
+SET f.status = 'claimed', f.agent = $agent_id, f.claimed_at = $now, f.attempts = f.attempts + 1
+RETURN p.id, p.url, f.depth
+```
+
+**Explorer: record navigation and grow the queue in one step.**
+
+```cypher
+UNWIND $links AS l
+MATCH (src:Page {id: $page_id}), (c:Crawl {id: $crawl_id}), (via:Element {id: l.via})
+MERGE (dst:Page {id: l.dst_id})
+ON CREATE SET dst.url = l.dst_url, dst.path = l.dst_path, dst.first_seen = $now
+MERGE (src)-[r:LEADS_TO {via: l.via}]->(dst)
+SET r.action = l.action, r.label = l.label, r.inputs = l.inputs, r.crawl = $crawl_id, r.last_seen = $now,
+    r.cost = CASE l.action WHEN 'submit' THEN 3 ELSE 1 END, r.stale = false
+MERGE (via)-[:OPENS]->(dst)
+MERGE (c)-[f:FRONTIER]->(dst)
+ON CREATE SET f.status = CASE WHEN l.enqueue THEN 'pending' ELSE 'skipped' END,
+              f.depth = l.depth, f.queued_at = $now, f.attempts = 0, f.from = $page_id
+```
+
+**Demo: find the element a goal is about** (full-text index over everything the product says).
 
 ```cypher
 CALL db.idx.fulltext.queryNodes('Element', $query) YIELD node, score
@@ -255,10 +230,12 @@ WHERE NOT coalesce(node.removed, false)
 MATCH (p:Page)-[:HAS_ELEMENT]->(node)
 WHERE NOT coalesce(p.gone, false)
 RETURN node.id, node.kind, node.text, p.id, p.path, node.is_submit, node.click_effect, node.click_note, score
-ORDER BY score DESC LIMIT 25
+ORDER BY score DESC
+LIMIT 25
 ```
 
-**Cheapest route to it** (weighted shortest path; a route through a removed link costs 1000+ and is rejected):
+**Demo: the cheapest route to it** (weighted shortest path; a route through a removed link costs 1000+ and is
+rejected).
 
 ```cypher
 MATCH (a:Page {id: $start}), (b:Page {id: $target})
@@ -268,40 +245,30 @@ YIELD path, pathWeight
 RETURN [n IN nodes(path) | n.id],
        [r IN relationships(path) | {via: r.via, action: r.action, label: r.label, inputs: r.inputs, cost: r.cost}],
        pathWeight
-ORDER BY pathWeight ASC LIMIT 1
+ORDER BY pathWeight ASC
+LIMIT 1
 ```
 
-**Which demos are stale** (a scene is stale when anything it cites now says something else):
+**Which demos are stale.**
 
 ```cypher
 MATCH (d:Demo)-[:HAS_SCENE]->(s:Scene)-[c:CITES]->(e:Element)
 WITH d, s, c.hash <> e.content_hash OR coalesce(e.removed, false) AS broken
 WITH d, s, max(CASE WHEN broken THEN 1 ELSE 0 END) AS stale
-RETURN d.id, d.goal, d.created_at, count(s) AS scenes, sum(stale) AS stale_scenes
+RETURN d.id, d.goal, d.created_at, count(s) AS scenes, sum(stale) AS stale_scenes, coalesce(d.status, 'current')
+ORDER BY d.created_at DESC
 ```
 
-**Which seconds of which videos are now wrong:**
+**Which seconds of which videos are now wrong.**
 
 ```cypher
-MATCH (v:Video)-[sh:SHOWS]->(s:Scene)-[c:CITES]->(e:Element)
-WHERE c.hash <> e.content_hash OR coalesce(e.removed, false)
-RETURN v.id, v.path, s.index, sh.start, sh.end, c.text, e.text, coalesce(e.removed, false)
+MATCH (v:Video)-[:RENDERS]->(d:Demo), (v)-[sh:SHOWS]->(s:Scene)-[c:CITES]->(e:Element)
+WHERE coalesce(d.status, 'current') <> 'superseded' AND (c.hash <> e.content_hash OR coalesce(e.removed, false))
+RETURN v.id, v.path, s.index, sh.start, sh.end, c.text, e.text, coalesce(e.removed, false), c.role
 ORDER BY v.id, sh.start
 ```
 
-**Everything the recorder needs to replay a demo**, including each citation's current hash so a stale demo is
-refused before the browser even starts:
-
-```cypher
-MATCH (:Demo {id: $demo_id})-[:HAS_SCENE]->(s:Scene)-[:ON_PAGE]->(p:Page)
-OPTIONAL MATCH (s)-[c:CITES]->(e:Element)
-WITH s, p, collect({fact_id: e.id, role: c.role, text: c.text, hash: c.hash, current: e.content_hash,
-                    removed: coalesce(e.removed, false), selector: e.selector, kind: e.kind}) AS cites
-RETURN s.id, s.index, s.kind, s.narration, s.steps, p.url, p.path, s.page_title, cites, p.title
-ORDER BY s.index
-```
-
-**Rebuild a demo after a release** (watcher): lock onto the same element, retire every older version:
+**Watcher: replace a stale demo with its rebuild.**
 
 ```cypher
 MATCH (old:Demo {id: $old_id}), (new:Demo {id: $new_id}), (c:Crawl {id: $crawl_id})
@@ -310,195 +277,160 @@ MERGE (new)-[:SUPERSEDES]->(old)
 MERGE (c)-[:TRIGGERED]->(new)
 ```
 
-**Finish rebuilds that were interrupted** (a rebuilt demo whose predecessor had a video, but it has none):
+**Watcher: rebuilds that were interrupted** (along the whole version history).
 
 ```cypher
-MATCH (n:Demo {status: 'current'})-[:SUPERSEDES]->(o:Demo)
+MATCH (n:Demo {status: 'current'})-[:SUPERSEDES*1..]->(o:Demo)
 WHERE NOT (:Video)-[:RENDERS]->(n) AND ((:Video)-[:RENDERS]->(o) OR (:Doc)-[:DOCUMENTS]->(o))
 RETURN DISTINCT n.id, n.goal
 ```
 
-**Tests that will fail because the product changed** (QA):
+**QA: tests that will fail because the product changed.**
 
 ```cypher
 MATCH (t:TestSuite)-[ch:CHECKS]->(e:Element)
-WHERE ch.hash <> e.content_hash OR coalesce(e.removed, false)
+WHERE NOT coalesce(t.superseded, false) AND (ch.hash <> e.content_hash OR coalesce(e.removed, false))
 RETURN t.id, t.kind, t.path, count(e)
 ```
 
-**Retire links that disappeared** (run when a crawl finishes):
+**Knowledge Graph: retire links that disappeared** (run when a crawl finishes).
 
 ```cypher
 MATCH (c:Crawl {id: $crawl_id})-[:VISITED]->(:Page)-[r:LEADS_TO]->()
 WHERE r.crawl <> $crawl_id
 SET r.stale = true, r.cost = $stale_cost
+RETURN count(r)
 ```
 
-The Explorer's queries:
+## Run it
 
-**Claim the next page from the shared frontier** (atomic, respects the page cap):
+Requirements: Python 3.11+ and FalkorDB. ffmpeg is used from your PATH, or from the bundled `imageio-ffmpeg`.
 
-```cypher
-MATCH (c:Crawl {id: $crawl_id, status: 'running'})
-OPTIONAL MATCH (c)-[taken:FRONTIER]->()
-WHERE taken.status IN ['claimed', 'done']
-WITH c, count(taken) AS taken
-WHERE taken < c.max_pages
-MATCH (c)-[f:FRONTIER {status: 'pending'}]->(p:Page)
-WITH f, p ORDER BY f.depth ASC, f.queued_at ASC LIMIT 1
-SET f.status = 'claimed', f.agent = $agent_id, f.claimed_at = $now, f.attempts = f.attempts + 1
-RETURN p.id, p.url, f.depth
-```
-
-**Record navigation and grow the frontier in one step:**
-
-```cypher
-UNWIND $links AS l
-MATCH (src:Page {id: $page_id}), (c:Crawl {id: $crawl_id}), (via:Element {id: l.via})
-MERGE (dst:Page {id: l.dst_id})
-ON CREATE SET dst.url = l.dst_url, dst.path = l.dst_path, dst.first_seen = $now
-MERGE (src)-[r:LEADS_TO {via: l.via}]->(dst)
-SET r.action = l.action, r.label = l.label, r.inputs = l.inputs, r.crawl = $crawl_id, r.last_seen = $now
-MERGE (via)-[:OPENS]->(dst)
-MERGE (c)-[f:FRONTIER]->(dst)
-ON CREATE SET f.status = CASE WHEN l.enqueue THEN 'pending' ELSE 'skipped' END,
-              f.depth = l.depth, f.queued_at = $now, f.attempts = 0, f.from = $page_id
-```
-
-**Hand back work from an agent that died:**
-
-```cypher
-MATCH (:Crawl {id: $crawl_id})-[f:FRONTIER {status: 'claimed'}]->()
-WHERE f.claimed_at < $stale_before
-SET f.status = CASE WHEN f.attempts >= $max_attempts THEN 'failed' ELSE 'pending' END
-RETURN count(f)
-```
-
-**What changed in a crawl:**
-
-```cypher
-MATCH (c:Crawl {id: $crawl_id})<-[ch:CHANGED_IN]-(x)
-OPTIONAL MATCH (owner:Page)-[:HAS_ELEMENT]->(x)
-RETURN ch.kind, coalesce(owner.path, x.path) AS page, x.kind, x.selector, ch.old_text, ch.new_text
-```
-
-**Pages that appeared or disappeared since the previous crawl:**
-
-```cypher
-MATCH (c:Crawl {id: $crawl_id})-[:FOLLOWS]->(prev:Crawl)
-MATCH (prev)-[:VISITED]->(p:Page)
-WHERE NOT (c)-[:VISITED]->(p)
-CREATE (p)-[:CHANGED_IN {kind: 'page_removed', at: $now}]->(c)
-```
-
-## Run it locally
-
-Requirements: Python 3.11+, and FalkorDB.
-
-**1. Start FalkorDB**
-
-With Docker (also starts FalkorDB Browser at http://localhost:3000):
+**1. Start FalkorDB.** With Docker (this also starts FalkorDB Browser at http://localhost:3000):
 
 ```bash
 docker compose up -d
 ```
 
-Without Docker, on Windows with WSL (uses the server bundled in the `falkordblite` package):
+Without Docker, on Windows with WSL (uses the FalkorDB server bundled in the `falkordblite` package):
 
 ```bash
 wsl -d Ubuntu -- bash scripts/falkordb-wsl.sh
 ```
 
-**2. Install**
+**2. Install.**
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python -m pip install -r requirements.txt   # macOS/Linux: .venv/bin/python
+.venv/Scripts/python -m pip install -r requirements.txt     # macOS/Linux: .venv/bin/python
 .venv/Scripts/python -m playwright install chromium
 ```
 
-**3. Start the sample product** (Ledgerly, a fictional invoicing app with synthetic data)
+**3. Start the sample product**, Ledgerly: a fictional invoicing app with synthetic data.
 
 ```bash
 .venv/Scripts/python sample_app/server.py --port 8765
 ```
 
-**4. Explore it**
+**4. Everything in one command** (Orchestrator):
 
 ```bash
-.venv/Scripts/python -m demograph explore http://127.0.0.1:8765 --agents 3
-.venv/Scripts/python -m demograph status  http://127.0.0.1:8765
-.venv/Scripts/python -m demograph map     http://127.0.0.1:8765
+.venv/Scripts/python -m demograph run http://127.0.0.1:8765 "export csv" "create an invoice"
 ```
 
-**5. Ship a "release" and see what changed**
+**Or step by step:**
 
 ```bash
-.venv/Scripts/python sample_app/mutate.py price pro 35
-.venv/Scripts/python sample_app/mutate.py label new_invoice "Create an invoice"
-.venv/Scripts/python -m demograph explore http://127.0.0.1:8765 --agents 3
-.venv/Scripts/python -m demograph changes http://127.0.0.1:8765
+.venv/Scripts/python -m demograph explore  http://127.0.0.1:8765 --agents 3      # Explorer + Knowledge Graph
+.venv/Scripts/python -m demograph plan     http://127.0.0.1:8765 "export csv"    # Demo: route + scenes
+.venv/Scripts/python -m demograph record   http://127.0.0.1:8765 "export csv"    # Demo + Documentation
+.venv/Scripts/python -m demograph qa       http://127.0.0.1:8765                 # QA
+.venv/Scripts/python -m demograph release  http://127.0.0.1:8765                 # Release Intelligence
+.venv/Scripts/python -m demograph demos    http://127.0.0.1:8765                 # what is stale, and where
+```
+
+**Ship a release and watch it rebuild:**
+
+```bash
+.venv/Scripts/python sample_app/mutate.py label export_csv "Download CSV"
+.venv/Scripts/python -m demograph watch http://127.0.0.1:8765 --every 60
 .venv/Scripts/python sample_app/mutate.py reset
 ```
 
-**6. Plan demos and check them after releases**
+Useful options: `--resume` (continue a killed crawl), `--join <crawl-id>` (add agents from another terminal),
+`--max-pages`, `--max-depth`, `--headed` (watch the browsers), `--silent` (no voiceover, nothing sent to the
+network), `--voice en-GB-SoniaNeural`. Outputs go to `data/videos/`, `data/docs/`, `data/qa/` and
+`data/releases/`.
+
+## Live dashboard
 
 ```bash
-.venv/Scripts/python -m demograph plan  http://127.0.0.1:8765 "export csv"
-.venv/Scripts/python -m demograph plan  http://127.0.0.1:8765 "create an invoice"
-.venv/Scripts/python -m demograph plan  http://127.0.0.1:8765 "export csv" --start /pricing --dry-run
-.venv/Scripts/python -m demograph demos http://127.0.0.1:8765
+.venv/Scripts/python -m demograph ui http://127.0.0.1:8765        # then open http://127.0.0.1:8800
 ```
 
-Saved plans are also written to `data/demos/<demo-id>.json`.
+DemoGraph Studio reads FalkorDB every 0.7 seconds and shows the work as it happens:
 
-**7. Record narrated videos**
+- **Site box:** the website to work on.
+- **Agent pipeline:** the seven agents and the output each one hands to the next; a moving packet marks a live handoff.
+- **Explore live:** pages appear as agents discover them, each agent glides to the page it is reading, and stored pages turn indigo.
+- **Replay exploration:** re-plays how the product was mapped, outward from the home page.
+- **Plan route:** the shortest path to the feature lights up, with the scenes and their citations.
+- **Record video + guide:** renders the MP4 and the guide, which then play and open in the inspector.
+- **Simulate release** (sample app only) and **Watch for changes:** the changed page turns red, the change travels to
+  the demo, its video and guide, and the watcher rebuilds them.
 
-```bash
-.venv/Scripts/python -m demograph record http://127.0.0.1:8765 demo-export-csv-97f3   # a saved demo
-.venv/Scripts/python -m demograph record http://127.0.0.1:8765 "change plan"          # plan + record in one go
-.venv/Scripts/python -m demograph record http://127.0.0.1:8765 "export csv" --silent  # captions only, no network
-```
+The dashboard only accepts commands from its own page; cross-site requests are refused.
 
-Videos, captions, a poster frame, and the raw browser session go to
-`data/videos/<graph>/<demo-id>/`. ffmpeg comes from your PATH, or from the bundled `imageio-ffmpeg`
-binary. The voiceover sends only the narration text to Microsoft's Edge text-to-speech service. Use
-`--silent` to keep everything local, or `--voice en-GB-SoniaNeural` to pick another voice.
+## Results
 
-**8. Guides, tests, release notes, autopilot, everything at once**
+Measured on the sample app (21 pages, 3 agents):
 
-```bash
-.venv/Scripts/python -m demograph document http://127.0.0.1:8765 "export csv"     # guide only
-.venv/Scripts/python -m demograph qa       http://127.0.0.1:8765                  # generate + run tests
-.venv/Scripts/python -m demograph release  http://127.0.0.1:8765                  # release notes, latest crawl
-.venv/Scripts/python -m demograph watch    http://127.0.0.1:8765 --every 60       # autopilot
-.venv/Scripts/python -m demograph run      http://127.0.0.1:8765 "export csv" "create an invoice"   # orchestrator
-```
+| Crawl | What happened | Pages unchanged | Clicks run | Clicks reused from graph memory |
+|---|---|---|---|---|
+| 1 | first crawl | 0 | 16 | 0 |
+| 2 | nothing changed | 21 | 0 | 16 |
+| 3 | Pro price $29 → $35, "New invoice" renamed | 10 | 8 | 8 |
 
-On a public site the Explorer only follows links (no clicks or form submits unless you pass `--interact`)
-and respects `robots.txt`:
+- Crawl 3 reported exactly 11 changes, on the pages where the price or the label appears.
+- After a button rename, the watcher detected the release and rebuilt the demo, video and guide on its own. The
+  generated regression test failed with the exact reason (`live page says "Export CSV", scene cites "Download CSV"`)
+  until it was regenerated.
+- The Orchestrator ran explore, two recorded demos, 23 generated tests (all passing) and a run report in one
+  command, and reported an impossible goal ("teleport to mars") without stopping the run.
+- On a real public site, [books.toscrape.com](https://books.toscrape.com) (a sandbox made for scraping practice), it
+  crawled 15 pages in 25 seconds and produced a narrated, verified demo and guide.
 
-```bash
-.venv/Scripts/python -m demograph explore https://books.toscrape.com/ --max-pages 15
-.venv/Scripts/python -m demograph record  https://books.toscrape.com/ "travel"
-```
+Sample outputs: [a rendered demo video](docs/proof-run/create-an-invoice.mp4) with
+[captions](docs/proof-run/create-an-invoice.srt), and a [3D explainer](docs/animation/explainer.mp4).
 
-Other explore options: `--resume` (continue a killed crawl), `--join <crawl-id>` (add agents from another
-terminal), `--max-pages`, `--max-depth`, `--headed` (watch the browsers), `--interact/--no-interact`.
+## Which websites it works on
 
-**Tests** (need FalkorDB running):
+| Website | What DemoGraph does |
+|---|---|
+| **Your own app** (localhost or `*.test`) | Everything: follows links, clicks buttons, submits forms with obviously fake data, records, documents, tests, watches |
+| **Public sites that allow crawlers** | Follows links only (no clicks or form submits unless you pass `--interact`), then plans, records, documents and tests from links |
+| **Sites whose robots.txt forbids bots** (for example zomato.com) | Refuses to crawl. This is deliberate. |
+| **Pages behind a login, CAPTCHA or paywall** | Not supported; the hackathon rules also forbid loading such data |
+
+Large sites are explored up to `--max-pages` (default 40) and `--max-depth` (default 5). Buttons such as
+*Delete*, *Pay*, *Cancel* or *Log out* are never clicked.
+
+## Testing
 
 ```bash
 .venv/Scripts/python -m pytest
 ```
 
-They cover a full crawl, memory reuse, change detection, crash-and-resume, the page cap, planning
-feature and form demos, custom start pages, rejecting unsupported numbers, stale-scene detection, never
-routing through removed links, rendering a verified video (codec, timeline, captions, graph timeline),
-refusing stale or contradicted demos, pinpointing the stale seconds of a video after a release, writing a
-verified guide, the watcher rebuilding a stale demo (video, guide, history edges, duplicates retired), and
-marking a demo broken when its feature is removed. Each
-runs against its own throwaway graph (voiceover is silent in tests, so no network is needed).
+16 end-to-end tests run against a real FalkorDB. Each uses its own throwaway graph, and the voiceover is silent,
+so no network is needed. They cover:
+
+- **Explorer:** a full crawl, memory reuse, change detection, crash and resume, and the page cap.
+- **Planner:** feature and form demos, custom start pages, rejecting numbers nothing cites, stale-scene detection,
+  and never routing through removed links.
+- **Recorder:** a verified video (codec, timeline, captions, graph timeline), refusing stale or contradicted demos,
+  and pinpointing the stale seconds after a release.
+- **Documentation and watcher:** writing a verified guide; rebuilding a stale demo with its video, guide, history
+  edges and retired duplicates; and marking a demo broken when its feature is removed.
 
 ## Project layout
 
@@ -508,49 +440,43 @@ demograph/
   schema.py           constraints and indexes
   ids.py              URL normalization, page ids, fact ids, content hashes
   db.py               async FalkorDB wrapper
-  planner.py          goal -> target element -> shortest route -> cited scenes; save and verify
-  documenter.py       Documentation agent: guide.md + guide.html with annotated step screenshots
+  explorer/           Explorer + Knowledge Graph agents: extract.py, agent.py, crawl.py
+  planner.py          Demo agent, planning: goal -> element -> shortest route -> cited scenes
+  recorder/           Demo agent, filming: live replay, rendering, voiceover
+  documenter.py       Documentation agent
+  qa.py               QA agent
+  release.py          Release Intelligence agent
+  orchestrator.py     Orchestrator agent
   watcher.py          watch loop: re-crawl, rebuild stale demos, heal interrupted rebuilds
-  qa.py               QA agent: generates + runs Playwright regression and smoke tests
-  release.py          Release Intelligence agent: release notes from CHANGED_IN
-  orchestrator.py     Orchestrator agent: the whole pipeline in one command
-  recorder/
-    __init__.py       graph check -> voiceover -> live replay -> render -> Video node
-    replay.py         replays steps in Chromium, checks citations live, captures keyframes
-    render.py         camera moves, rings, cursor, captions, title/closing cards, MP4 via ffmpeg
-    media.py          Edge TTS voiceover (cached), WAV timeline, ffmpeg lookup
-  explorer/
-    extract.py        what is read from a page; safety rules; fake form values
-    agent.py          one Explorer agent: claim, visit, diff, click, write
-    crawl.py          start / join / resume a crawl, run agents, finalize
-  __main__.py         CLI
+  ui/                 DemoGraph Studio dashboard (server.py + index.html)
+  __main__.py         command line
 sample_app/           Ledgerly sample product + mutate.py to simulate releases
-docs/proof-run/       a rendered demo video, its captions, and a frame sheet
-docs/animation/       3D explainer animation (Gemini-generated, edited) + MP4 capture script
-demograph/ui/         live dashboard: server.py + animated index.html
 tests/                end-to-end tests against a real FalkorDB
+docs/                 submission video, sample demo, 3D explainer, dashboard screenshot
+scripts/              FalkorDB-in-WSL starter, README generator
 ```
 
-## Data
+## Data, safety and rules
 
-The crawled product is the bundled sample app, Ledgerly. Its content and invoices are synthetic. The public
-test was run on books.toscrape.com, a sandbox site built for scraping practice. No private, personal, or
-login-protected data goes into the graph.
+- The product explored for the demo is Ledgerly, a bundled sample app with synthetic data. The public test used
+  books.toscrape.com, a sandbox built for scraping practice.
+- No private, personal or login-protected data goes into the graph. Forms are filled only on apps you own, and
+  only with obviously fake values.
+- `robots.txt` is respected, and dangerous buttons are never clicked.
+- The voiceover sends only narration text to Microsoft's Edge text-to-speech service; `--silent` keeps
+  everything local.
 
 ## Prior work and AI disclosure
 
-DemoGraph continues an idea from the author's earlier project
-[Veridemo](https://github.com/Ariya-rithvik/demo): demo videos whose claims trace back to real page elements.
-All code in this repository, including the FalkorDB graph model, the queries, and the Explorer, was
-written during the hackathon.
+DemoGraph continues an idea from the author's earlier project [Veridemo](https://github.com/Ariya-rithvik/demo):
+demo videos whose claims trace back to real page elements. All code in this repository, including the FalkorDB
+graph model, the queries and all seven agents, was written during the hackathon.
 
-This project was built with help from AI tools, disclosed as the rules require:
+AI tools used, disclosed as the rules require:
 
-- **Claude Code** (AI coding assistant) helped write and test the code.
-- **Google Gemini** generated the first version of the 3D explainer animation
-  ([docs/animation/explainer.html](docs/animation/explainer.html)). It was then edited to show the real
-  Ledgerly content and accurate claims, and given a frame-by-frame capture mode
-  ([docs/animation/capture.py](docs/animation/capture.py)).
+- **Claude Code** (AI coding assistant) helped write, review and test the code.
+- **Google Gemini** generated the first version of the 3D explainer animation, which was then edited to show
+  the real product and accurate claims.
+- **Microsoft Edge neural text-to-speech** provides the voiceover.
 
-The author chose the idea and direction (it continues their Veridemo work), reviewed and tested everything,
-and is responsible for the code.
+The author chose the idea and direction, reviewed and tested the work, and is responsible for the code.
