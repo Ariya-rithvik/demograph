@@ -26,7 +26,7 @@ def _now() -> int:
 
 
 async def watch_once(root_url: str, graph: str | None = None, agents: int = 3, pace: float = 0.0,
-                     engine: str = "auto", log=print) -> dict:
+                     engine: str = "auto", tests: bool = True, log=print) -> dict:
     root = normalize_url(root_url)
     summary = await explore(CrawlConfig(root_url=root, agents=agents, graph=graph, pace=pace), log=log)
     report = {"crawl": summary["crawl"], "changes": summary["changes"], "updated": [], "broken": [], "healed": []}
@@ -38,6 +38,19 @@ async def watch_once(root_url: str, graph: str | None = None, agents: int = 3, p
         else:
             log(f"No changes in {summary['crawl']}.")
         await _finish_interrupted(store, root, engine, report, log)
+        if summary["changes"]:
+            qa_line = None
+            if tests:  # QA agent: regenerate and run tests for what was rebuilt, plus the page smoke suite
+                from .qa import qa
+                rebuilt = [u["new"] for u in report["updated"] + report["healed"] if u.get("video")]
+                suites = await qa(store, root, rebuilt, log=log)
+                report["qa"] = {"passed": sum(s.passed or 0 for s in suites), "failed": sum(s.failed or 0 for s in suites)}
+                qa_line = (f"Regenerated {len(suites)} test suite{'s' * (len(suites) != 1)}: "
+                           f"{report['qa']['passed']} passed, {report['qa']['failed']} failed.")
+            from .release import release_notes  # Release Intelligence agent: notes for this release
+            note = await release_notes(store, root, summary["crawl"], qa_summary=qa_line)
+            report["release"] = note.path.as_posix()
+            log(f"Release notes: {note.path.as_posix()} ({note.summary})")
     finally:
         await store.close()
     return report

@@ -516,3 +516,106 @@ RETURN c.id, d.id, d.goal, d.broken_reason, d.broken_at
 ORDER BY d.broken_at DESC
 LIMIT 8
 """
+
+# --- QA agent -------------------------------------------------------------------
+#
+#   (:TestSuite {kind})-[:GENERATED_FROM]->(:Crawl)
+#   (:TestSuite)-[:COVERS]->(:Demo)                  regression suites
+#   (:TestSuite)-[:CHECKS {hash}]->(:Element)        what each suite asserts
+#   (:TestRun {passed, failed})-[:RAN]->(:TestSuite)
+
+CRAWL_PAGES = """
+MATCH (:Crawl {id: $crawl_id})-[:VISITED]->(p:Page)
+RETURN p.id, p.url, p.path
+ORDER BY p.path
+"""
+
+PAGE_HEADING = """
+MATCH (:Page {id: $page_id})-[:HAS_ELEMENT]->(e:Element {kind: 'heading'})
+WHERE NOT coalesce(e.removed, false)
+RETURN e.id, e.selector, e.text, e.content_hash
+ORDER BY e.bbox[1], e.bbox[0]
+LIMIT 1
+"""
+
+SAVE_TEST_SUITE = """
+MATCH (c:Crawl {id: $crawl_id})
+CREATE (t:TestSuite {id: $suite_id, kind: $kind, path: $path, tests: $tests, generated_at: $now})
+CREATE (t)-[:GENERATED_FROM]->(c)
+WITH t
+OPTIONAL MATCH (d:Demo {id: $demo_id})
+FOREACH (_ IN CASE WHEN d IS NULL THEN [] ELSE [1] END | CREATE (t)-[:COVERS]->(d))
+WITH DISTINCT t
+UNWIND $checks AS ch
+MATCH (e:Element {id: ch.fact_id})
+CREATE (t)-[:CHECKS {hash: ch.hash}]->(e)
+"""
+
+SAVE_TEST_RUN = """
+MATCH (t:TestSuite {id: $suite_id})
+CREATE (r:TestRun {id: $run_id, at: $now, passed: $passed, failed: $failed, ms: $ms, failures: $failures})
+CREATE (r)-[:RAN]->(t)
+SET t.last_passed = $passed, t.last_failed = $failed, t.last_run = $now
+"""
+
+# Suites that assert something the product no longer says: they will fail until regenerated.
+STALE_TEST_SUITES = """
+MATCH (t:TestSuite)-[ch:CHECKS]->(e:Element)
+WHERE ch.hash <> e.content_hash OR coalesce(e.removed, false)
+RETURN t.id, t.kind, t.path, count(e)
+"""
+
+LATEST_TEST_SUITES = """
+MATCH (t:TestSuite)
+OPTIONAL MATCH (t)-[:COVERS]->(d:Demo)
+RETURN t.id, t.kind, t.path, t.tests, t.last_passed, t.last_failed, t.last_run, d.goal, t.generated_at
+ORDER BY t.generated_at DESC
+LIMIT 12
+"""
+
+# --- Release Intelligence agent ---------------------------------------------------
+#
+#   (:ReleaseNote {summary, changes})-[:DESCRIBES]->(:Crawl)
+
+PREVIOUS_CRAWL = """
+MATCH (:Crawl {id: $crawl_id})-[:FOLLOWS]->(p:Crawl)
+RETURN p.id
+"""
+
+CRAWL_TRIGGERED = """
+MATCH (:Crawl {id: $crawl_id})-[:TRIGGERED]->(n:Demo)
+OPTIONAL MATCH (n)-[:SUPERSEDES]->(o:Demo)
+RETURN n.id, n.goal, collect(o.id)
+"""
+
+CRAWL_BROKE = """
+MATCH (:Crawl {id: $crawl_id})-[:BROKE]->(d:Demo)
+RETURN d.id, d.goal, d.broken_reason
+"""
+
+SAVE_RELEASE_NOTE = """
+MATCH (c:Crawl {id: $crawl_id})
+CREATE (r:ReleaseNote {id: $note_id, path: $path, changes: $changes, summary: $summary, created_at: $now})
+CREATE (r)-[:DESCRIBES]->(c)
+"""
+
+LATEST_RELEASE_NOTES = """
+MATCH (r:ReleaseNote)-[:DESCRIBES]->(c:Crawl)
+RETURN r.id, r.path, r.changes, r.summary, r.created_at, c.id
+ORDER BY r.created_at DESC
+LIMIT 5
+"""
+
+# --- Orchestrator -----------------------------------------------------------------
+#
+#   (:Run)-[:USED]->(:Crawl), (:Run)-[:PRODUCED]->(:Demo)
+
+SAVE_RUN = """
+MATCH (c:Crawl {id: $crawl_id})
+CREATE (r:Run {id: $run_id, at: $now, goals: $goals, status: $status, report: $report, failures: $failures})
+CREATE (r)-[:USED]->(c)
+WITH r
+UNWIND $demos AS d
+MATCH (demo:Demo {id: d})
+CREATE (r)-[:PRODUCED]->(demo)
+"""

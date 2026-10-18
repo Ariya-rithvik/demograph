@@ -134,6 +134,17 @@ class Dashboard:
                           for r in self.q(Q.DEMO_UPDATES)]
         out["broken"] = [{"crawl": r[0], "demo": r[1], "goal": r[2], "reason": r[3], "at": r[4]}
                          for r in self.q(Q.BROKEN_DEMOS)]
+        suites, seen = [], set()
+        for r in self.q(Q.LATEST_TEST_SUITES):  # newest first; latest generation of each file
+            if r[2] in seen:
+                continue
+            seen.add(r[2])
+            suites.append({"id": r[0], "kind": r[1], "path": r[2], "tests": r[3], "passed": r[4], "failed": r[5],
+                           "run_at": r[6], "goal": r[7]})
+        out["tests"] = suites
+        out["stale_tests"] = [{"id": r[0], "kind": r[1], "path": r[2], "elements": r[3]} for r in self.q(Q.STALE_TEST_SUITES)]
+        out["releases"] = [{"id": r[0], "path": r[1], "changes": r[2], "summary": r[3], "at": r[4], "crawl": r[5]}
+                           for r in self.q(Q.LATEST_RELEASE_NOTES)]
         if out["sample_app"]:
             out["sample_label"] = current_sample_label()
         return out
@@ -232,6 +243,8 @@ def make_handler(dash: Dashboard):
                 data_root = (ROOT / settings.data_dir).resolve()
                 if data_root in target.parents and target.is_file():
                     ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+                    if target.suffix in (".md", ".py", ".srt"):
+                        ctype = "text/plain; charset=utf-8"
                     return self._send(200, target.read_bytes(), ctype)
             self._send(404, b"not found", "text/plain")
 

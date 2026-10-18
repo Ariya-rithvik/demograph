@@ -175,6 +175,45 @@ async def cmd_document(a) -> None:
     print(f"Markdown {guide.markdown.as_posix()}")
 
 
+async def cmd_qa(a) -> None:
+    from .qa import qa
+    store = _store(a.url, a.graph)
+    root = normalize_url(a.url)
+    try:
+        demos = [await _resolve_demo(store, root, d, "/") for d in a.demos] if a.demos else None
+        suites = await qa(store, root, demos, run=not a.no_run, smoke=not a.no_smoke, log=lambda m: print(m, flush=True))
+    except PlanError as e:
+        raise SystemExit(str(e))
+    finally:
+        await store.close()
+    if not a.no_run:
+        passed = sum(s.passed or 0 for s in suites)
+        failed = sum(s.failed or 0 for s in suites)
+        print(f"QA       {len(suites)} suites, {passed} passed, {failed} failed")
+        if failed:
+            raise SystemExit(1)
+
+
+async def cmd_release(a) -> None:
+    from .release import release_notes
+    store = _store(a.url, a.graph)
+    try:
+        note = await release_notes(store, normalize_url(a.url), a.crawl)
+    finally:
+        await store.close()
+    print(note.path.read_text(encoding="utf-8"))
+    print(f"\n(saved to {note.path.as_posix()})")
+
+
+async def cmd_run(a) -> None:
+    from .orchestrator import run_pipeline
+    report = await run_pipeline(a.url, a.goals, agents=a.agents, engine="silent" if a.silent else "auto",
+                                graph=a.graph, max_pages=a.max_pages, log=lambda m: print(m, flush=True))
+    print(f"\nRun {report['run']}: {report['status']} · report {report['report']}")
+    if report["status"] != "ok":
+        raise SystemExit(1)
+
+
 async def cmd_watch(a) -> None:
     from .watcher import watch
     await watch(a.url, every=a.every, rounds=a.rounds, agents=a.agents, pace=a.pace,
@@ -279,6 +318,26 @@ def main(argv=None) -> None:
     dc.add_argument("--headed", action="store_true")
     dc.add_argument("--graph")
 
+    qp = sub.add_parser("qa", help="generate and run Playwright regression + smoke tests from the graph")
+    qp.add_argument("url")
+    qp.add_argument("demos", nargs="*", help="demo ids or goals (default: every current demo)")
+    qp.add_argument("--no-run", action="store_true", help="only generate the test files")
+    qp.add_argument("--no-smoke", action="store_true", help="skip the per-page smoke suite")
+    qp.add_argument("--graph")
+
+    rl = sub.add_parser("release", help="release notes for a crawl: what changed and what it affected")
+    rl.add_argument("url")
+    rl.add_argument("--crawl", help="crawl id (default: latest)")
+    rl.add_argument("--graph")
+
+    rn = sub.add_parser("run", help="orchestrator: explore, plan, record, document and test in one go")
+    rn.add_argument("url")
+    rn.add_argument("goals", nargs="+", help='features to demo, e.g. "export csv" "create an invoice"')
+    rn.add_argument("--agents", type=int, default=3)
+    rn.add_argument("--max-pages", type=int, default=40)
+    rn.add_argument("--silent", action="store_true")
+    rn.add_argument("--graph")
+
     wt = sub.add_parser("watch", help="re-crawl on a schedule and rebuild every demo, video and guide that went stale")
     wt.add_argument("url")
     wt.add_argument("--every", type=float, default=60.0, help="seconds between checks")
@@ -305,7 +364,8 @@ def main(argv=None) -> None:
         return serve(a.url, a.port)
     handler = {"explore": cmd_explore, "status": cmd_status, "changes": cmd_changes, "map": cmd_map,
                "plan": cmd_plan, "demos": cmd_demos, "record": cmd_record,
-               "document": cmd_document, "watch": cmd_watch}[a.cmd]
+               "document": cmd_document, "watch": cmd_watch, "qa": cmd_qa,
+               "release": cmd_release, "run": cmd_run}[a.cmd]
     asyncio.run(handler(a))
 
 

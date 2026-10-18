@@ -95,7 +95,7 @@
   .member b i { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
   .member small { display: block; color: var(--dim); font-size: 11.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .member.busy { border-color: rgba(251,191,36,.45); background: rgba(251,191,36,.06); } .member.busy b i { background: var(--warn); box-shadow: 0 0 8px var(--warn); animation: blink 1s infinite; }
-  .member.ok b i { background: var(--ok); } .member.alert { border-color: rgba(255,77,109,.45); } .member.alert b i { background: var(--bad); }
+  .member.ok b i { background: var(--ok); } .crew .member:last-child { grid-column: span 2; } .member.alert { border-color: rgba(255,77,109,.45); } .member.alert b i { background: var(--bad); }
   .agent { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: center; padding: 8px; border-radius: 14px;
            background: rgba(255,255,255,.03); border: 1px solid var(--stroke); margin-bottom: 8px; }
   .agent.live { border-color: rgba(251,191,36,.35); }
@@ -177,7 +177,7 @@
           <div class="metric"><b id="sLinks">0</b><small>links</small></div>
         </div>
       </div>
-      <div class="glass card"><h3>Six agents <span>one graph</span></h3><div class="crew" id="crew"></div></div>
+      <div class="glass card"><h3>Seven agents <span>one graph</span></h3><div class="crew" id="crew"></div></div>
       <div class="glass card" id="autoSec" hidden><h3>Autopilot <span>watcher</span></h3><div id="auto"></div></div>
       <div class="glass card" id="videoSec" hidden><h3>Latest video</h3><video id="video" controls></video><div class="cap" id="videoCap"></div></div>
       <div class="glass card" id="planSec" hidden><h3>Planned demo <span id="planMeta"></span></h3><div id="scenes"></div></div>
@@ -446,13 +446,19 @@ function render(s) {
   const lastCrawlChanges = s.changes.length, unchanged = s.visits.filter(v => v.unchanged).length;
   const latestVideo = s.demos.map(d => d.video).filter(Boolean).sort((a, b) => b.at - a.at)[0];
   const latestDoc = s.demos.map(d => d.doc).filter(Boolean).sort((a, b) => b.at - a.at)[0];
+  const goalsWithDoc = new Set(s.demos.filter(d => d.doc).map(d => d.goal)).size;
+  const qaPassed = s.tests.reduce((a, t) => a + (t.passed || 0), 0), qaFailed = s.tests.reduce((a, t) => a + (t.failed || 0), 0);
+  const testing = (watching && /Generated .* suite|passed, \d+ failed/.test(watchLog[watchLog.length - 1] || ''));
+  const rel = s.releases[0];
+  const anyJob = ['explore', 'record', 'watch'].find(k => running(s, k));
   const crew = [
+    ['Orchestrator', watching ? (rebuilding ? 'release detected · coordinating rebuild' : 'running the watch loop') : anyJob ? `running ${anyJob}` : 'idle', watching || anyJob ? (rebuilding ? 'busy' : 'ok') : ''],
     ['Explorer', crawling ? `scraping · ${done}/${pages.length} pages` : `${pages.length} pages mapped`, crawling ? 'busy' : pages.length ? 'ok' : ''],
-    ['Memory', lastCrawlChanges ? `${lastCrawlChanges} change${lastCrawlChanges > 1 ? 's' : ''} in last crawl` : `${unchanged} pages unchanged`, lastCrawlChanges ? 'alert' : pages.length ? 'ok' : ''],
-    ['Planner', `${s.demos.length} demo${s.demos.length === 1 ? '' : 's'} planned`, s.demos.length ? 'ok' : ''],
-    ['Recorder', recording ? 'rendering video…' : latestVideo ? `latest ${Number(latestVideo.duration).toFixed(0)}s video` : 'no video yet', recording ? 'busy' : latestVideo ? 'ok' : ''],
-    ['Docs', recording ? 'writing guide…' : `${s.demos.filter(d => d.doc).length} guide${s.demos.filter(d => d.doc).length === 1 ? '' : 's'}`, recording ? 'busy' : latestDoc ? 'ok' : ''],
-    ['Watcher', watching ? (rebuilding ? 'rebuilding stale demos…' : 'watching') : stale.length ? `${stale.length} stale · off` : 'off', watching ? (rebuilding ? 'busy' : 'ok') : stale.length ? 'alert' : ''],
+    ['Knowledge graph', lastCrawlChanges ? `${lastCrawlChanges} change${lastCrawlChanges > 1 ? 's' : ''} in last crawl` : `${unchanged} pages unchanged`, lastCrawlChanges ? 'alert' : pages.length ? 'ok' : ''],
+    ['Demo', recording || (rebuilding && /Rendering|Replaying/.test(watchLog[watchLog.length - 1] || '')) ? 'filming…' : `${new Set(s.demos.map(d => d.goal)).size} demos` + (latestVideo ? ` · ${Number(latestVideo.duration).toFixed(0)}s video` : ''), recording ? 'busy' : stale.length ? 'alert' : latestVideo ? 'ok' : ''],
+    ['Documentation', recording ? 'writing guide…' : `${goalsWithDoc} guide${goalsWithDoc === 1 ? '' : 's'}`, recording ? 'busy' : latestDoc ? 'ok' : ''],
+    ['QA', testing ? 'running generated tests…' : s.tests.length ? `${qaPassed} passed · ${qaFailed} failed` + (s.stale_tests.length ? ` · ${s.stale_tests.length} outdated` : '') : 'no tests yet', testing ? 'busy' : (qaFailed || s.stale_tests.length) ? 'alert' : s.tests.length ? 'ok' : ''],
+    ['Release intelligence', rel ? rel.summary : 'no release yet', rel ? (rel.changes ? 'alert' : 'ok') : ''],
   ];
   $('crew').innerHTML = crew.map(([n, d, c]) => `<div class="member ${c}"><b><i></i>${n}</b><small>${esc(d)}</small></div>`).join('');
 
@@ -461,6 +467,8 @@ function render(s) {
   for (const x of s.stale_segments.slice(0, 3)) auto.push(`<div class="alert"><b>${x.start}s – ${x.end}s</b> of a video · scene ${x.scene}<br>${x.role === 'result' ? 'shows the result of a button that' : 'says “' + esc(x.was) + '”, the product'} now says “${esc(x.now)}”</div>`);
   for (const x of s.stale_sections.slice(0, 2)) auto.push(`<div class="alert"><b>Guide step ${x.section}</b> cites “${esc(x.role === 'result' ? x.was.slice(0, 40) : x.was)}”, the product now says “${esc(x.now)}”</div>`);
   for (const u of s.updates.slice(0, 3)) auto.push(`<div class="good"><b>Rebuilt “${esc(u.goal)}”</b> after ${esc(u.crawl.slice(6, 21))}: new video and guide replace <code>${esc(u.old)}</code></div>`);
+  if (rel && rel.changes) auto.unshift(`<div class="good" style="border-color:rgba(124,92,255,.4);background:rgba(124,92,255,.08);color:#ddd5ff"><b>Release notes</b> · ${esc(rel.summary)} · <a style="color:#c8bcff" href="${fileUrl(rel.path)}" target="_blank">open ↗</a></div>`);
+  for (const t of s.stale_tests.slice(0, 2)) auto.push(`<div class="alert"><b>${esc(t.kind)} test</b> asserts ${t.elements} changed element${t.elements > 1 ? 's' : ''}: it will fail until the watcher regenerates it</div>`);
   for (const b of s.broken.slice(0, 2)) auto.push(`<div class="alert"><b>“${esc(b.goal)}” is broken</b><br>${esc(b.reason)}</div>`);
   $('autoSec').hidden = !auto.length; $('auto').innerHTML = auto.join('');
   if (s.updates[0] && Date.now() - s.updates[0].at < 20000) toast(`✓ Rebuilt “${s.updates[0].goal}”: video and guide updated`);
