@@ -34,11 +34,13 @@ async def watch_once(root_url: str, graph: str | None = None, agents: int = 3, p
     try:
         if summary["changes"]:
             log(f"Release detected: {summary['changes']} change(s) in {summary['crawl']}")
-            await _rebuild_stale(store, root, summary["crawl"], engine, report, log)
         else:
             log(f"No changes in {summary['crawl']}.")
+        # Stale is a property of the graph, not of this crawl: a change an earlier crawl recorded
+        # (an Explore click, a stopped round) still needs its demos rebuilt.
+        await _rebuild_stale(store, root, summary["crawl"], engine, report, log, quiet=not summary["changes"])
         await _finish_interrupted(store, root, engine, report, log)
-        if summary["changes"]:
+        if summary["changes"] or report["updated"] or report["healed"] or report["broken"]:
             qa_line = None
             if tests:  # QA agent: regenerate and run tests for what was rebuilt, plus the page smoke suite
                 from .qa import qa
@@ -56,9 +58,10 @@ async def watch_once(root_url: str, graph: str | None = None, agents: int = 3, p
     return report
 
 
-async def _rebuild_stale(store: GraphStore, root: str, crawl_id: str, engine: str, report: dict, log) -> None:
+async def _rebuild_stale(store: GraphStore, root: str, crawl_id: str, engine: str, report: dict, log,
+                         quiet: bool = False) -> None:
     stale = [r for r in await store.query(Q.DEMO_HEALTH) if int(r[4] or 0) > 0 and r[5] == "current"]
-    if not stale:
+    if not stale and not quiet:
         log("No demo cites anything that changed.")
     # Several demos of the same goal on the same element are duplicates: rebuild the newest
     # one and retire the rest onto it, so a release never multiplies videos.
@@ -114,15 +117,18 @@ async def _record(store: GraphStore, root: str, demo_id: str, goal: str, engine:
         res = await record_demo(store, root, demo_id, engine=engine, log=log)
         entry["video"] = res.path.as_posix()
         entry["guide"] = res.guide_html.as_posix() if res.guide_html else None
-    except RecordError as e:
-        entry["error"] = str(e)
-        log(f"Could not re-record '{goal}': {e}")
+    except Exception as e:  # RecordError, or Playwright/ffmpeg failing; the next round retries via PENDING_REBUILDS
+        entry["error"] = f"{type(e).__name__}: {e}"
+        log(f"Could not re-record '{goal}': {entry['error'].splitlines()[0]}")
 
 
 async def watch(root_url: str, every: float = 60.0, rounds: int | None = None, log=print, **kw) -> None:
     n = 0
     while rounds is None or n < rounds:
-        await watch_once(root_url, log=log, **kw)
+        try:
+            await watch_once(root_url, log=log, **kw)
+        except Exception as e:  # keep watching; one bad round must not stop the autopilot
+            log(f"Watch round failed: {type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}")
         n += 1
         if rounds is None or n < rounds:
             log(f"Next check in {every:g}s")

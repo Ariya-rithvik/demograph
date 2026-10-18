@@ -476,11 +476,12 @@ RETURN e.id
 """
 
 DEMO_ARTIFACTS = """
-MATCH (d:Demo {id: $demo_id})
-OPTIONAL MATCH (v:Video)-[:RENDERS]->(d)
-WITH d, count(v) AS videos
-OPTIONAL MATCH (doc:Doc)-[:DOCUMENTS]->(d)
-RETURN videos, count(doc)
+MATCH (d:Demo {id: $demo_id})-[:SUPERSEDES*0..]->(x:Demo)
+OPTIONAL MATCH (v:Video)-[:RENDERS]->(x)
+WITH collect(DISTINCT v) AS videos, collect(DISTINCT x) AS versions
+UNWIND versions AS x
+OPTIONAL MATCH (doc:Doc)-[:DOCUMENTS]->(x)
+RETURN size(videos), count(DISTINCT doc)
 """
 
 SUPERSEDE_DEMO = """
@@ -498,7 +499,7 @@ MERGE (c)-[:BROKE]->(d)
 
 # A current demo rebuilt from one that had a video or guide, but has neither yet.
 PENDING_REBUILDS = """
-MATCH (n:Demo {status: 'current'})-[:SUPERSEDES]->(o:Demo)
+MATCH (n:Demo {status: 'current'})-[:SUPERSEDES*1..]->(o:Demo)
 WHERE NOT (:Video)-[:RENDERS]->(n) AND ((:Video)-[:RENDERS]->(o) OR (:Doc)-[:DOCUMENTS]->(o))
 RETURN DISTINCT n.id, n.goal
 """
@@ -539,6 +540,9 @@ LIMIT 1
 """
 
 SAVE_TEST_SUITE = """
+OPTIONAL MATCH (older:TestSuite {path: $path})
+SET older.superseded = true
+WITH count(older) AS retired
 MATCH (c:Crawl {id: $crawl_id})
 CREATE (t:TestSuite {id: $suite_id, kind: $kind, path: $path, tests: $tests, generated_at: $now})
 CREATE (t)-[:GENERATED_FROM]->(c)
@@ -561,7 +565,7 @@ SET t.last_passed = $passed, t.last_failed = $failed, t.last_run = $now
 # Suites that assert something the product no longer says: they will fail until regenerated.
 STALE_TEST_SUITES = """
 MATCH (t:TestSuite)-[ch:CHECKS]->(e:Element)
-WHERE ch.hash <> e.content_hash OR coalesce(e.removed, false)
+WHERE NOT coalesce(t.superseded, false) AND (ch.hash <> e.content_hash OR coalesce(e.removed, false))
 RETURN t.id, t.kind, t.path, count(e)
 """
 

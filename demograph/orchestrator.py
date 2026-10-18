@@ -51,9 +51,10 @@ async def run_pipeline(root_url: str, goals: list[str], agents: int = 3, engine:
                                         "video": res.path.as_posix(),
                                         "guide": res.guide_html.as_posix() if res.guide_html else None})
                 log(f"[orchestrator] ✓ {goal}: {' -> '.join(plan.route_paths)}")
-            except (PlanError, RecordError) as e:
-                report["failures"].append({"goal": goal, "error": str(e)})
-                log(f"[orchestrator] ✗ {goal}: {str(e).splitlines()[0]}")
+            except Exception as e:  # PlanError, RecordError, or a browser/ffmpeg failure
+                msg = str(e) or type(e).__name__
+                report["failures"].append({"goal": goal, "error": msg})
+                log(f"[orchestrator] ✗ {goal}: {msg.splitlines()[0]}")
 
         log("[orchestrator] 3/4 generate and run tests")
         suites = await qa(store, root, [d["demo"] for d in report["demos"]], log=log)

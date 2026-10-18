@@ -87,10 +87,13 @@ Crawl {crawl}. Regenerated automatically when the product changes; do not edit b
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
 from demograph.qa import {fn}
+
+DATA = json.loads(Path(__file__).with_suffix(".json").read_text(encoding="utf-8"))
 '''
 
 
@@ -100,9 +103,9 @@ async def generate_regression(store: GraphStore, demo_id: str, crawl_id: str, ou
     path = out_dir / f"test_demo_{_slug(meta['goal'])}.py"
     body = HEADER.format(what=f"Regression test for demo {demo_id} ({meta['goal']!r}): replays every step and\n"
                               f"checks each cited element still says what the demo says.", crawl=crawl_id, fn="run_demo")
-    body += f"\nSCENES = json.loads(r'''{json.dumps(scenes, ensure_ascii=False, indent=1)}''')\n\n\n"
-    body += f"def test_{_slug(meta['goal'])}():\n    run_demo(SCENES)\n"
+    body += f"\n\ndef test_{_slug(meta['goal'])}():\n    run_demo(DATA)\n"
     path.write_text(body, encoding="utf-8")
+    path.with_suffix(".json").write_text(json.dumps(scenes, ensure_ascii=False, indent=1), encoding="utf-8")
     checks = [{"fact_id": c["fact_id"], "hash": c["current"]} for s in scenes for c in s["cites"]]
     suite = Suite(id=f"qa-{_slug(meta['goal'])}-{secrets.token_hex(2)}", kind="regression", path=path, tests=1, demo=demo_id)
     await _save(store, suite, crawl_id, checks)
@@ -118,10 +121,10 @@ async def generate_smoke(store: GraphStore, crawl_id: str, out_dir: Path) -> Sui
     path = out_dir / "test_smoke_pages.py"
     body = HEADER.format(what=f"Smoke tests: each of the {len(pages)} pages loads without redirecting and its main heading\n"
                               f"still says what the crawl stored.", crawl=crawl_id, fn="check_page")
-    body += f"\nPAGES = json.loads(r'''{json.dumps(pages, ensure_ascii=False, indent=1)}''')\n\n\n"
-    body += "@pytest.mark.parametrize(\"page\", PAGES, ids=[p[\"path\"] for p in PAGES])\n"
+    body += "\n\n@pytest.mark.parametrize(\"page\", DATA, ids=[p[\"path\"] for p in DATA])\n"
     body += "def test_page(page):\n    check_page(page)\n"
     path.write_text(body, encoding="utf-8")
+    path.with_suffix(".json").write_text(json.dumps(pages, ensure_ascii=False, indent=1), encoding="utf-8")
     checks = [{"fact_id": p["heading"]["fact_id"], "hash": p["heading"]["hash"]} for p in pages if p["heading"]]
     suite = Suite(id=f"qa-smoke-{secrets.token_hex(2)}", kind="smoke", path=path, tests=len(pages))
     await _save(store, suite, crawl_id, checks)
@@ -139,8 +142,12 @@ async def _save(store: GraphStore, suite: Suite, crawl_id: str, checks: list[dic
 def run_suite(suite: Suite) -> Suite:
     """Run a generated suite with pytest; collect pass/fail and the failure messages."""
     report = suite.path.with_suffix(".xml")
+    report.unlink(missing_ok=True)
     subprocess.run([sys.executable, "-m", "pytest", str(suite.path), "-q", "-p", "no:cacheprovider",
                     "-o", "addopts=", f"--junitxml={report}"], cwd=ROOT, capture_output=True, text=True)
+    if not report.exists():  # pytest could not even collect the file
+        suite.passed, suite.failed, suite.failures = 0, 1, [f"{suite.path.name}: pytest produced no report"]
+        return suite
     root = ET.parse(report).getroot()
     cases = root.iter("testcase")
     suite.passed = suite.failed = 0

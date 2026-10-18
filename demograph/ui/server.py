@@ -248,7 +248,17 @@ def make_handler(dash: Dashboard):
                     return self._send(200, target.read_bytes(), ctype)
             self._send(404, b"not found", "text/plain")
 
+        def _same_origin(self) -> bool:
+            port = self.server.server_address[1]
+            allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+            if self.headers.get("Host") not in allowed:
+                return False  # also blocks DNS rebinding
+            origin = self.headers.get("Origin")
+            return origin is None or urlsplit(origin).netloc in allowed
+
         def do_POST(self):
+            if not self._same_origin():
+                return self._json({"error": "cross-site request refused"}, 403)
             url = urlsplit(self.path)
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             if url.path == "/api/site":
