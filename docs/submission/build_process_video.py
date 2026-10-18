@@ -26,7 +26,8 @@ OUT = ROOT / "docs" / "submission"
 DASH = "http://127.0.0.1:8800/"
 PROCESS_S = 84.0  # length of the sped-up live section
 
-VOICE_P = ("This is DemoGraph Studio, reading FalkorDB live. On the left, the pipeline and the seven agents. "
+VOICE_P = ("This is DemoGraph Studio, reading FalkorDB live. The agent pipeline shows seven agents, and each one hands its output to the next: "
+           "the orchestrator starts the explorer, the explorer feeds pages to the knowledge graph, and the graph feeds the demo, documentation, QA and release agents. "
            "Replay exploration shows how three browser agents mapped the product, page by page, from the home page. "
            "Now we ask for a demo: create an invoice. Full-text search finds the button, and the weighted shortest path "
            "lights up the route, with every scene citing real page elements. "
@@ -93,7 +94,9 @@ async def main() -> None:
 
     a, p, b1, b2 = (WORK / n for n in ("a.mp4", "p.mp4", "b1.mp4", "b2.mp4"))
     segment(ROOT / "docs" / "animation" / "explainer.mp4", va.path, a, max(va.duration + 1, 50))
-    segment(fast, vp.path, p, target)
+    vf = "scale=1280:720,fps=30,tpad=stop_mode=clone:stop_duration=60,format=yuv420p"
+    ffmpeg("-i", fast, "-i", vp.path, "-filter_complex", f"[0:v]{vf}[v];[1:a]apad,atrim=0:{target},aresample=44100[a]",
+           "-map", "[v]", "-map", "[a]", "-t", target, "-c:v", "libx264", "-crf", "20", "-c:a", "aac", "-b:a", "160k", "-ac", "2", p)
     demo = ROOT / "docs" / "proof-run" / "create-an-invoice.mp4"
     segment(demo, vb.path, b1, vb.duration + 0.4)
     segment(demo, None, b2, 0)
