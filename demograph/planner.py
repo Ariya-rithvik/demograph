@@ -132,17 +132,30 @@ def fts_query(goal: str, any_word: bool = False) -> str | None:
     return ("|" if any_word else " ").join(words)
 
 
+TITLE_SEPARATORS = (" · ", " | ", " – ", " — ", " - ")
+
+
+def _title_parts(title: str | None) -> list[str]:
+    """Split a page title on its strongest separator: 'All products | Books to Scrape - Sandbox'
+    -> ['All products', 'Books to Scrape - Sandbox']."""
+    title = " ".join((title or "").split())
+    for sep in TITLE_SEPARATORS:
+        if sep in title:
+            head, _, tail = title.partition(sep)
+            return [head.strip(), tail.strip()]
+    return [title] if title else []
+
+
 def short_title(title: str | None, fallback: str) -> str:
     """'Pricing · Ledgerly' -> 'Pricing'."""
-    if not title:
-        return fallback
-    return re.split(r"\s+[·|–—-]\s+", title)[0].strip() or fallback
+    parts = _title_parts(title)
+    return parts[0] if parts and parts[0] else fallback
 
 
 def product_name(title: str | None, fallback: str) -> str:
     """'Home · Ledgerly' -> 'Ledgerly'."""
-    parts = re.split(r"\s+[·|–—-]\s+", title or "")
-    return parts[-1].strip() if len(parts) > 1 else fallback
+    parts = _title_parts(title)
+    return parts[1] if len(parts) > 1 and parts[1] else fallback
 
 
 def join_names(names: list[str]) -> str:
@@ -346,7 +359,9 @@ class Planner:
                 cites = [self._cite(f, "fill") for f in fields] + [self._cite(via, "click")]
                 scenes.append(await self._scene(len(scenes), "form", hop.src, narration, steps, cites))
             else:
-                narration = f"Click “{via.text}” to open the {dst_title} page."
+                # Only name the next page when the crawl actually read its title; never narrate a URL.
+                narration = (f"Click “{via.text}” to open the {dst_title} page." if dst["title"]
+                             else f"Click “{via.text}”.")
                 steps = [{"do": "click", "selector": via.selector, "expect_url": dst["url"]}]
                 scenes.append(await self._scene(len(scenes), "navigate", hop.src, narration, steps,
                                                 [self._cite(via, "click")]))
