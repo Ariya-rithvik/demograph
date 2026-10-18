@@ -10,6 +10,8 @@
     python -m demograph record  http://127.0.0.1:8765 "export csv"     (plan + record)
     python -m demograph record  http://127.0.0.1:8765 <demo-id>
     python -m demograph demos   http://127.0.0.1:8765
+    python -m demograph document http://127.0.0.1:8765 "export csv"   (step-by-step guide)
+    python -m demograph watch   http://127.0.0.1:8765 --every 60      (auto-rebuild on change)
 """
 
 import argparse
@@ -142,8 +144,42 @@ async def cmd_record(a) -> None:
     print(f"Poster   {res.poster.as_posix()}")
     if res.raw:
         print(f"Raw      {res.raw.as_posix()}  (unedited browser session)")
+    if res.guide_html:
+        print(f"Guide    {res.guide_html.as_posix()}  (+ {res.guide.name})")
     print(f"Graph    (:Video {{id: '{res.video_id}'}}) -[:SHOWS {{start, end}}]-> {len(res.timeline)} scenes, "
           f"{res.citations} citations verified live")
+
+
+async def _resolve_demo(store, root, demo_or_goal: str, start: str) -> str:
+    if await store.one(Q.DEMO_INFO, {"demo_id": demo_or_goal}):
+        return demo_or_goal
+    planner = Planner(store, root)  # not a saved demo id: treat it as a goal and plan it now
+    plan = await planner.plan(demo_or_goal, start_path=start)
+    await planner.save(plan)
+    print(f"Planned  {plan.id}: {'  ->  '.join(plan.route_paths)}")
+    return plan.id
+
+
+async def cmd_document(a) -> None:
+    from .documenter import DocError, document_demo
+    store = _store(a.url, a.graph)
+    root = normalize_url(a.url)
+    try:
+        demo_id = await _resolve_demo(store, root, a.demo, a.start)
+        guide = await document_demo(store, root, demo_id, headless=not a.headed)
+    except (PlanError, DocError) as e:
+        raise SystemExit(str(e))
+    finally:
+        await store.close()
+    print(f"Guide    {guide.html.as_posix()}  ({guide.steps} steps, {guide.citations} citations verified live)")
+    print(f"Markdown {guide.markdown.as_posix()}")
+
+
+async def cmd_watch(a) -> None:
+    from .watcher import watch
+    await watch(a.url, every=a.every, rounds=a.rounds, agents=a.agents, pace=a.pace,
+                engine="silent" if a.silent else "auto", graph=a.graph,
+                log=lambda m: print(m, flush=True))
 
 
 async def cmd_demos(a) -> None:
@@ -152,8 +188,12 @@ async def cmd_demos(a) -> None:
         rows = await store.query(Q.DEMO_HEALTH)
         if not rows:
             print("No demos yet. Run `demograph plan <url> \"<goal>\"`.")
-        for demo_id, goal, _, scenes, stale in rows:
+        for demo_id, goal, _, scenes, stale, status in rows:
+            if status == "superseded":
+                continue
             state = "up to date" if not stale else f"{int(stale)} of {scenes} scenes STALE"
+            if status == "broken":
+                state = "BROKEN (feature not reachable any more)"
             videos = await store.query(Q.DEMO_VIDEOS, {"demo_id": demo_id})
             print(f"  {demo_id:<34} {goal!r:<24} {state}" + (f"  ({len(videos)} video{'s' * (len(videos) != 1)})" if videos else ""))
             if stale:
@@ -173,6 +213,17 @@ async def cmd_demos(a) -> None:
                 else:
                     what = f"says “{was}”, the product {now_text}"
                 print(f"  {path}  {start:.1f}s-{end:.1f}s  scene {idx}: {what}")
+        sections = await store.query(Q.STALE_DOC_SECTIONS)
+        if sections:
+            print("\nGuide steps that no longer match the product:")
+            for doc_id, path, section, was, now, removed, role in sections:
+                now_text = "is gone" if removed else f"now says “{now}”"
+                print(f"  {path}  step {section}: cites “{was}”, the product {now_text}")
+        updates = await store.query(Q.DEMO_UPDATES)
+        if updates:
+            print("\nRebuilt by the watcher:")
+            for crawl, new, old, goal, _ in updates:
+                print(f"  '{goal}': {old} -> {new}  (after {crawl})")
     finally:
         await store.close()
 
@@ -221,6 +272,22 @@ def main(argv=None) -> None:
     rc.add_argument("--headed", action="store_true", help="show the browser while replaying")
     rc.add_argument("--graph")
 
+    dc = sub.add_parser("document", help="replay a demo and write its step-by-step guide")
+    dc.add_argument("url")
+    dc.add_argument("demo", help="a demo id from `plan`, or a goal to plan and document in one go")
+    dc.add_argument("--start", default="/")
+    dc.add_argument("--headed", action="store_true")
+    dc.add_argument("--graph")
+
+    wt = sub.add_parser("watch", help="re-crawl on a schedule and rebuild every demo, video and guide that went stale")
+    wt.add_argument("url")
+    wt.add_argument("--every", type=float, default=60.0, help="seconds between checks")
+    wt.add_argument("--rounds", type=int, default=None, help="stop after this many checks (default: forever)")
+    wt.add_argument("--agents", type=int, default=3)
+    wt.add_argument("--pace", type=float, default=0.0)
+    wt.add_argument("--silent", action="store_true", help="rebuild videos without voiceover")
+    wt.add_argument("--graph")
+
     ui = sub.add_parser("ui", help="live dashboard: watch the crawl, plan demos, play videos")
     ui.add_argument("url")
     ui.add_argument("--port", type=int, default=8800)
@@ -237,7 +304,8 @@ def main(argv=None) -> None:
         from .ui.server import serve
         return serve(a.url, a.port)
     handler = {"explore": cmd_explore, "status": cmd_status, "changes": cmd_changes, "map": cmd_map,
-               "plan": cmd_plan, "demos": cmd_demos, "record": cmd_record}[a.cmd]
+               "plan": cmd_plan, "demos": cmd_demos, "record": cmd_record,
+               "document": cmd_document, "watch": cmd_watch}[a.cmd]
     asyncio.run(handler(a))
 
 

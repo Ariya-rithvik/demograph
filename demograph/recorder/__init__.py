@@ -40,6 +40,9 @@ class RecordResult:
     raw: Path | None
     voice: str
     citations: int
+    doc_id: str | None = None
+    guide: Path | None = None
+    guide_html: Path | None = None
 
 
 async def load_demo(store: GraphStore, demo_id: str) -> tuple[dict, list[dict]]:
@@ -66,7 +69,7 @@ def stale_citations(scenes: list[dict]) -> list[str]:
 
 async def record_demo(store: GraphStore, root_url: str, demo_id: str, voice: str = DEFAULT_VOICE,
                       engine: str = "auto", headless: bool = True, scale: int = 2,
-                      log=print) -> RecordResult:
+                      log=print, guide: bool = True) -> RecordResult:
     await apply_schema(store)
     meta, scenes = await load_demo(store, demo_id)
     problems = stale_citations(scenes)
@@ -88,6 +91,15 @@ async def record_demo(store: GraphStore, root_url: str, demo_id: str, voice: str
     live_problems = [p for c in captures for p in c.problems]
     if live_problems or len(captures) != len(scenes):
         raise RecordError("The live product does not match the plan:\n  " + "\n  ".join(live_problems))
+
+    doc_id = md = html_path = None
+    if guide:  # the documentation agent writes the step-by-step guide from this same verified replay
+        from ..documenter import build_guide, save_guide
+        md, html_path, _ = build_guide(captures, scenes, meta, root_url, crawl[0],
+                                       settings.data_dir / "docs" / store.name / demo_id)
+        doc_id = await save_guide(store, demo_id, crawl[0], md, html_path,
+                                  md.read_text(encoding="utf-8").splitlines()[0][2:], scenes)
+        log(f"Guide written: {html_path.as_posix()}")
 
     slots = [SceneSlot(capture=c, duration=round(max(2.4, v.duration + 0.8) * FPS) / FPS, voice=v.path)
              for c, v in zip(captures, voices)]
@@ -126,4 +138,4 @@ async def record_demo(store: GraphStore, root_url: str, demo_id: str, voice: str
         "verified": True, "timeline": result.timeline})
     return RecordResult(video_id=video_id, path=mp4, duration=result.duration, timeline=result.timeline,
                         srt=srt, poster=poster, raw=replayer.raw_video, voice=", ".join(voice_used),
-                        citations=citations)
+                        citations=citations, doc_id=doc_id, guide=md, guide_html=html_path)

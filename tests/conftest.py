@@ -65,6 +65,7 @@ def _drop_graph(name: str) -> None:
     asyncio.run(drop())
     shutil.rmtree(settings.data_dir / "screenshots" / name, ignore_errors=True)
     shutil.rmtree(settings.data_dir / "videos" / name, ignore_errors=True)
+    shutil.rmtree(settings.data_dir / "docs" / name, ignore_errors=True)
 
 
 @pytest.fixture()

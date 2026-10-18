@@ -245,14 +245,24 @@ class Planner:
 
     # --- the whole plan -------------------------------------------------------
 
-    async def plan(self, goal: str, start_path: str = "/", max_len: int = 8) -> DemoPlan:
+    async def plan(self, goal: str, start_path: str = "/", max_len: int = 8,
+                   target_id: str | None = None) -> DemoPlan:
+        """target_id locks the demo onto one element (by fact id) instead of searching for the goal.
+        The watcher uses it to rebuild a demo about the same button even after its label changed."""
         await self.store.query(Q.BACKFILL_LINK_COSTS)
         crawl_id = await self.latest_crawl()
         start = page_id(normalize_url(start_path, self.site_origin + "/"))
         home = await self._page(start)
         self.product = product_name(home["title"], self.site_origin)
 
-        found = await self.candidates(goal)
+        if target_id:
+            row = await self.store.one(Q.ELEMENT_CANDIDATE, {"fact_id": target_id})
+            if not row:  # do not quietly re-target the demo onto some other text that mentions the goal
+                raise PlanError(f"The element this demo was about ({target_id}) is no longer in the product.")
+            found = [Candidate(fact_id=row[0], kind=row[1], text=row[2], page_id=row[3], page_path=row[4],
+                               is_submit=bool(row[5]), click_effect=row[6], click_note=row[7], score=0.0)]
+        else:
+            found = await self.candidates(goal)
         if not found:
             raise PlanError(f"Nothing in the product matches {goal!r}.")
         reachable = []

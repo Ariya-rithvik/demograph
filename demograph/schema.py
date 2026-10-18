@@ -2,7 +2,7 @@
 
 from .db import GraphStore
 
-UNIQUE_NODE_IDS = ["Site", "Crawl", "Page", "Element", "Agent", "Demo", "Scene", "Video"]
+UNIQUE_NODE_IDS = ["Site", "Crawl", "Page", "Element", "Agent", "Demo", "Scene", "Video", "Doc"]
 
 NODE_INDEXES = [
     ("Crawl", "status"),

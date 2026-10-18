@@ -303,6 +303,13 @@ ORDER BY score DESC
 LIMIT 25
 """
 
+# The one element a demo is locked onto (used when rebuilding a demo after a release).
+ELEMENT_CANDIDATE = """
+MATCH (p:Page)-[:HAS_ELEMENT]->(node:Element {id: $fact_id})
+WHERE NOT coalesce(node.removed, false) AND NOT coalesce(p.gone, false)
+RETURN node.id, node.kind, node.text, p.id, p.path, node.is_submit, node.click_effect, node.click_note
+"""
+
 # Cheapest route between two pages over links that still exist (weighted by r.cost).
 SHORTEST_PATH = """
 MATCH (a:Page {id: $start}), (b:Page {id: $target})
@@ -372,7 +379,7 @@ DEMO_HEALTH = """
 MATCH (d:Demo)-[:HAS_SCENE]->(s:Scene)-[c:CITES]->(e:Element)
 WITH d, s, c.hash <> e.content_hash OR coalesce(e.removed, false) AS broken
 WITH d, s, max(CASE WHEN broken THEN 1 ELSE 0 END) AS stale
-RETURN d.id, d.goal, d.created_at, count(s) AS scenes, sum(stale) AS stale_scenes
+RETURN d.id, d.goal, d.created_at, count(s) AS scenes, sum(stale) AS stale_scenes, coalesce(d.status, 'current')
 ORDER BY d.created_at DESC
 """
 
@@ -420,8 +427,8 @@ CREATE (v)-[:SHOWS {start: t.start, end: t.end}]->(s)
 
 # Which seconds of which rendered videos now show something the product no longer says.
 STALE_VIDEO_SEGMENTS = """
-MATCH (v:Video)-[sh:SHOWS]->(s:Scene)-[c:CITES]->(e:Element)
-WHERE c.hash <> e.content_hash OR coalesce(e.removed, false)
+MATCH (v:Video)-[:RENDERS]->(d:Demo), (v)-[sh:SHOWS]->(s:Scene)-[c:CITES]->(e:Element)
+WHERE coalesce(d.status, 'current') <> 'superseded' AND (c.hash <> e.content_hash OR coalesce(e.removed, false))
 RETURN v.id, v.path, s.index, sh.start, sh.end, c.text, e.text, coalesce(e.removed, false), c.role
 ORDER BY v.id, sh.start
 """
@@ -430,4 +437,82 @@ DEMO_VIDEOS = """
 MATCH (v:Video)-[:RENDERS]->(d:Demo {id: $demo_id})
 RETURN v.id, v.path, v.duration, v.rendered_at
 ORDER BY v.rendered_at DESC
+"""
+
+# --- Documentation agent ------------------------------------------------------
+#
+#   (:Doc)-[:DOCUMENTS]->(:Demo)
+#   (:Doc)-[:VERIFIED_AGAINST]->(:Crawl)
+#   (:Doc)-[:SHOWS {section}]->(:Scene)              which guide step shows which scene
+
+SAVE_DOC = """
+MATCH (d:Demo {id: $demo_id}), (c:Crawl {id: $crawl_id})
+CREATE (doc:Doc {id: $doc_id, path: $path, html: $html, title: $title, rendered_at: $now, verified: true})
+CREATE (doc)-[:DOCUMENTS]->(d)
+CREATE (doc)-[:VERIFIED_AGAINST]->(c)
+WITH doc
+UNWIND $sections AS sec
+MATCH (s:Scene {id: sec.scene_id})
+CREATE (doc)-[:SHOWS {section: sec.section}]->(s)
+"""
+
+# Which guide steps now describe something the product no longer says.
+STALE_DOC_SECTIONS = """
+MATCH (doc:Doc)-[:DOCUMENTS]->(d:Demo), (doc)-[sh:SHOWS]->(s:Scene)-[c:CITES]->(e:Element)
+WHERE coalesce(d.status, 'current') <> 'superseded' AND (c.hash <> e.content_hash OR coalesce(e.removed, false))
+RETURN doc.id, doc.path, sh.section, c.text, e.text, coalesce(e.removed, false), c.role
+ORDER BY doc.id, sh.section
+"""
+
+# --- Watcher agent --------------------------------------------------------------
+#
+#   (:Demo)-[:SUPERSEDES]->(:Demo)                   rebuilt version replaces the stale one
+#   (:Crawl)-[:TRIGGERED]->(:Demo)                   the crawl whose changes caused the rebuild
+#   (:Crawl)-[:BROKE]->(:Demo)                       the feature a demo was about is gone
+
+DEMO_TARGET = """
+MATCH (:Demo {id: $demo_id})-[:TARGETS]->(e:Element)
+RETURN e.id
+"""
+
+DEMO_ARTIFACTS = """
+MATCH (d:Demo {id: $demo_id})
+OPTIONAL MATCH (v:Video)-[:RENDERS]->(d)
+WITH d, count(v) AS videos
+OPTIONAL MATCH (doc:Doc)-[:DOCUMENTS]->(d)
+RETURN videos, count(doc)
+"""
+
+SUPERSEDE_DEMO = """
+MATCH (old:Demo {id: $old_id}), (new:Demo {id: $new_id}), (c:Crawl {id: $crawl_id})
+SET old.status = 'superseded', old.superseded_at = $now, new.status = 'current'
+MERGE (new)-[:SUPERSEDES]->(old)
+MERGE (c)-[:TRIGGERED]->(new)
+"""
+
+MARK_DEMO_BROKEN = """
+MATCH (d:Demo {id: $demo_id}), (c:Crawl {id: $crawl_id})
+SET d.status = 'broken', d.broken_reason = $reason, d.broken_at = $now
+MERGE (c)-[:BROKE]->(d)
+"""
+
+# A current demo rebuilt from one that had a video or guide, but has neither yet.
+PENDING_REBUILDS = """
+MATCH (n:Demo {status: 'current'})-[:SUPERSEDES]->(o:Demo)
+WHERE NOT (:Video)-[:RENDERS]->(n) AND ((:Video)-[:RENDERS]->(o) OR (:Doc)-[:DOCUMENTS]->(o))
+RETURN DISTINCT n.id, n.goal
+"""
+
+DEMO_UPDATES = """
+MATCH (c:Crawl)-[:TRIGGERED]->(n:Demo)-[:SUPERSEDES]->(o:Demo)
+RETURN c.id, n.id, o.id, n.goal, n.created_at
+ORDER BY n.created_at DESC
+LIMIT 8
+"""
+
+BROKEN_DEMOS = """
+MATCH (c:Crawl)-[:BROKE]->(d:Demo)
+RETURN c.id, d.id, d.goal, d.broken_reason, d.broken_at
+ORDER BY d.broken_at DESC
+LIMIT 8
 """
