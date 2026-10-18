@@ -144,6 +144,8 @@ The re-crawl that found this ran 1 click and reused 15 from graph memory.
 .venv/Scripts/python -m demograph ui http://127.0.0.1:8765     # then open http://127.0.0.1:8800
 ```
 
+![DemoGraph Studio dashboard](docs/ui/dashboard.png)
+
 A web page that reads FalkorDB every 0.6 s and animates the work as it happens:
 
 - **Explore live:** pages appear in the graph as agents discover them. Each agent's dot moves to the page it is
